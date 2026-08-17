@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0.0",
+  "knowledge_version": "1.0.0",
+  "document_count": 154,
+  "embedding_status": "not_generated",
+  "embedding_instruction": "由运行时使用项目统一 embedding 模型生成，不要把向量提交到词库文件。",
+  "terms_sha256": "a1fdd2307695ef6202de5e5b66e0983ad061a3a9a13011a852273ef8e214ffd5",
+  "built_at_utc": "2026-08-17T16:55:26.153700+00:00"
+}

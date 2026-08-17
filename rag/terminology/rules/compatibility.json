@@ -1,0 +1,19 @@
+{
+  "version": "1.0.0",
+  "selection_rules": [
+    {"id":"one_primary_goods_type","when":"category == goods_type","action":"最多保留一个主商品类型；其他商品词转为套装或场景中的关联商品。"},
+    {"id":"pose_exclusive","terms":["A姿势","T姿势","中性站姿"],"action":"A姿势、T姿势和中性站姿互斥；没有明确输入时默认中性站姿。"},
+    {"id":"view_exclusive","terms":["三视图","正交视图","45度视角","正面全身"],"action":"三视图/正交视图用于建模参考，45度视角/正面全身用于预览图；不要将所有视角词混成一张图。"},
+    {"id":"q版-proportion","terms":["Q版","写实人体比例"],"action":"Q版启用2至4头身和简化四肢；禁止同时使用写实人体比例。"},
+    {"id":"transparent-acrylic","terms":["透明亚克力","白墨打底"],"action":"透明亚克力默认追加白墨打底；用户明确要求完全透明时才移除。"},
+    {"id":"acrylic-stand-base","terms":["亚克力立牌","稳定底座","卡扣连接"],"action":"亚克力立牌的3D表达默认包含独立插槽底座和定位结构。"},
+    {"id":"plush-material","terms":["棉花娃","毛绒布料","树脂"],"action":"棉花娃默认使用软填充和布料；树脂仅作为配件或包装，不作为主体材质。"},
+    {"id":"printability","terms":["GK手办","封闭网格","流形网格","无自相交","最小壁厚"],"action":"树脂手办或3D打印目标必须加入封闭、流形、无自相交和最小壁厚约束。"},
+    {"id":"copyright-style","when":"term refers to a living artist or a copyrighted character not supplied by the user","action":"保留用户明确提供的角色/IP信息；风格扩展改写为可观察的线条、色彩、构图和材质特征，并记录版权审核标签。"},
+    {"id":"minor-coded","terms":["幼年体型","萝莉","正太"],"action":"标记 minor_coded；禁止与色情、裸露或性化姿势组合，必要时改写为年龄中性的Q版玩偶描述。"}
+  ],
+  "negative_prompt_defaults": [
+    "低清晰度", "多余肢体", "重复配件", "变形手指", "身份特征丢失", "主体被裁切", "文字乱码",
+    "水印", "不可辨认的商品结构", "穿模", "悬浮几何体", "开口网格", "自相交", "破面"
+  ]
+}

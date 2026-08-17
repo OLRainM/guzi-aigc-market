@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aigc-3d-platform.local/schema/anime-terminology-term.json",
+  "title": "Anime Goods Terminology RAG Document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "content", "metadata"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^anime\\.[a-z0-9_]+\\.[a-f0-9]{8}$"},
+    "content": {"type": "string", "minLength": 20},
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "knowledge_version", "language", "domain", "term",
+        "aliases", "category", "subcategory", "tags", "prompt_targets",
+        "retrieval_keywords", "prompt_fragments", "related_terms", "risk_tags", "source"
+      ],
+      "properties": {
+        "schema_version": {"type": "string"},
+        "knowledge_version": {"type": "string"},
+        "language": {"const": "zh-CN"},
+        "domain": {"type": "string"},
+        "term": {"type": "string", "minLength": 1},
+        "aliases": {"type": "array", "items": {"type": "string"}},
+        "category": {"type": "string", "enum": ["goods_type", "character_concept", "appearance", "fashion", "visual_style", "composition", "model_3d", "material_process"]},
+        "subcategory": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "prompt_targets": {"type": "array", "items": {"enum": ["text_to_3d", "preview_image"]}, "minItems": 1},
+        "retrieval_keywords": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "prompt_fragments": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text_to_3d", "preview_image", "negative"],
+          "properties": {
+            "text_to_3d": {"type": "string"},
+            "preview_image": {"type": "string"},
+            "negative": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "related_terms": {"type": "array", "items": {"type": "string"}},
+        "risk_tags": {"type": "array", "items": {"type": "string"}},
+        "source": {"type": "string"}
+      }
+    }
+  }
+}

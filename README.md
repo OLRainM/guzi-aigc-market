@@ -1,5 +1,31 @@
 # 谷子交易平台与 3D 能力：技术分析
 
+## 本地启动
+
+第一阶段工程位于 `apps/web`、`apps/api` 和 `apps/worker`，基础设施由根目录的 `docker-compose.yml` 统一编排。
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build
+```
+
+启动后可访问：
+
+- Web：`http://localhost:5173`
+- Go API：`http://localhost:8080/healthz`、`http://localhost:8080/readyz`
+- AI Worker：`http://localhost:8000/healthz`、`http://localhost:8000/readyz`
+- MinIO 控制台：`http://localhost:9001`
+
+开发环境默认凭据仅用于本地联调，部署前必须通过环境变量替换。MySQL、Redis 和 MinIO 使用 Docker 数据卷持久化，`docker compose down` 不会删除数据；不要在保留数据时使用 `docker compose down -v`。
+
+Redis Streams 最小链路可通过下列命令验证：
+
+```powershell
+docker compose exec redis redis-cli XADD generation_jobs * job_id test-job job_type health_check message hello
+docker compose logs worker
+```
+
+
 > 项目方向已调整为“谷子交易为主，3D 商品预览和 AI 建模演示为特色能力”。
 >
 > 当前推荐实施方案请先阅读 [MVP_PLAN.md](./MVP_PLAN.md)：按 1–2 人、约 6 周规划一个可部署、真实持久化的全栈 MVP。
@@ -43,6 +69,10 @@ MVP 的核心演示链路为：
 
 真正困难的部分不是页面，而是异步 AI 任务、交易状态一致性、支付安全、3D 文件处理和平台合规。
 
+### 用户与交易身份
+
+平台采用统一账户体系，买家、卖家和创作者是可重叠的业务身份：同一用户既可以买，也可以卖，还可以创建 AI 建模任务。卖家分为发布二手闲置的个人卖家和发布全新商品的厂家卖家；创作者同样可以兼具任一卖家身份。管理员使用独立授权角色。
+
 ## 2. 推荐的总体架构
 
 课程设计、毕业设计或简历项目不建议一开始拆成大量微服务。推荐先做“模块化单体 + 独立 AI Worker”，需要扩容时再按业务边界拆服务。
@@ -53,14 +83,15 @@ Web / Mobile
     v
 Go API (Gin)
     |-- 用户与权限
-    |-- 资产与作品
+    |-- 资产与文件存储
+    |-- 商品与内容发布
     |-- 出售与悬赏
     |-- 订单与支付
     |-- 物流与通知
     |
     |-- MySQL：核心交易数据
     |-- Redis：缓存、幂等键、分布式锁、限流
-    |-- S3/OSS/MinIO：图片、GLB、源模型文件
+    |-- MinIO/COS/S3：图片、视频、GLB、参考图和生成结果
     |-- MQ：AI 生成、转码、缩略图、通知任务
     |
     v

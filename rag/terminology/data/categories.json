@@ -1,0 +1,45 @@
+{
+  "knowledge_version": "1.0.0",
+  "categories": [
+    {
+      "category": "goods_type",
+      "subcategory": "谷子品类",
+      "item_count": 20
+    },
+    {
+      "category": "character_concept",
+      "subcategory": "角色与人设",
+      "item_count": 28
+    },
+    {
+      "category": "appearance",
+      "subcategory": "外貌与非人特征",
+      "item_count": 20
+    },
+    {
+      "category": "fashion",
+      "subcategory": "服装与题材",
+      "item_count": 16
+    },
+    {
+      "category": "visual_style",
+      "subcategory": "画风与视觉语言",
+      "item_count": 18
+    },
+    {
+      "category": "composition",
+      "subcategory": "构图与姿态",
+      "item_count": 12
+    },
+    {
+      "category": "model_3d",
+      "subcategory": "3D模型约束",
+      "item_count": 20
+    },
+    {
+      "category": "material_process",
+      "subcategory": "材质与商品工艺",
+      "item_count": 20
+    }
+  ]
+}
