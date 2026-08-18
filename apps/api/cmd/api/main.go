@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
+	"aigc-3d-platform/apps/api/internal/auth"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/minio/minio-go/v7"
@@ -31,11 +33,32 @@ func env(key, fallback string) string {
 	return fallback
 }
 
+func durationEnv(key string, fallback time.Duration) time.Duration {
+	value, err := time.ParseDuration(env(key, fallback.String()))
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func boolEnv(key string, fallback bool) bool {
+	value, err := strconv.ParseBool(env(key, strconv.FormatBool(fallback)))
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
+	appEnv := env("APP_ENV", "development")
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" && appEnv == "development" {
+		jwtSecret = "local-development-secret-change-before-deployment"
+	}
 	port := env("API_PORT", "8080")
-	db, err := gorm.Open(mysql.Open(env("MYSQL_DSN", "root:root@tcp(localhost:3306)/aigc_platform?charset=utf8mb4&parseTime=True&loc=Local")), &gorm.Config{})
+	db, err := gorm.Open(mysql.Open(env("MYSQL_DSN", "root:root@tcp(localhost:3306)/aigc_platform?charset=utf8mb4&parseTime=True&loc=Local")), &gorm.Config{TranslateError: true})
 	if err != nil {
 		logger.Error("mysql connection failed", "error", err)
 		os.Exit(1)
@@ -47,6 +70,18 @@ func main() {
 		os.Exit(1)
 	}
 	deps := dependencies{db: db, redis: rdb, minio: mc, bucket: env("MINIO_BUCKET", "aigc-assets")}
+	authHandler, err := auth.New(db, auth.Config{
+		JWTSecret:     jwtSecret,
+		Issuer:        env("JWT_ISSUER", "aigc-3d-platform"),
+		AccessTTL:     durationEnv("JWT_ACCESS_TTL", 15*time.Minute),
+		RefreshTTL:    durationEnv("JWT_REFRESH_TTL", 30*24*time.Hour),
+		CookieSecure:  boolEnv("COOKIE_SECURE", false),
+		RefreshCookie: "refresh_token",
+	})
+	if err != nil {
+		logger.Error("auth initialization failed", "error", err)
+		os.Exit(1)
+	}
 	r := gin.New()
 	r.Use(gin.Recovery(), cors.New(cors.Config{
 		AllowOrigins:     []string{env("CORS_ALLOW_ORIGIN", "http://localhost:5173")},
@@ -58,9 +93,11 @@ func main() {
 	}), requestID())
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	r.GET("/readyz", readyHandler(deps))
-	r.GET("/api/v1/version", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"service": "api", "version": "0.1.0", "environment": env("APP_ENV", "development")})
+	api := r.Group("/api/v1")
+	api.GET("/version", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"service": "api", "version": "0.2.0", "environment": env("APP_ENV", "development")})
 	})
+	authHandler.RegisterRoutes(api)
 	logger.Info("api started", "port", port)
 	if err := r.Run(":" + port); err != nil {
 		logger.Error("api stopped", "error", err)

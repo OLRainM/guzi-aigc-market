@@ -11,7 +11,7 @@ docker compose up --build
 
 启动后可访问：
 
-- Web：`http://localhost:5173`
+- Web：`http://localhost:5173`（可注册、登录并进入个人中心）
 - Go API：`http://localhost:8080/healthz`、`http://localhost:8080/readyz`
 - AI Worker：`http://localhost:8000/healthz`、`http://localhost:8000/readyz`
 - MinIO 控制台：`http://localhost:9001`
