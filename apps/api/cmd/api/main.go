@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"aigc-3d-platform/apps/api/internal/auth"
+	"aigc-3d-platform/apps/api/internal/catalog"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/minio/minio-go/v7"
@@ -82,6 +83,11 @@ func main() {
 		logger.Error("auth initialization failed", "error", err)
 		os.Exit(1)
 	}
+	catalogHandler, err := catalog.New(db)
+	if err != nil {
+		logger.Error("catalog initialization failed", "error", err)
+		os.Exit(1)
+	}
 	r := gin.New()
 	r.Use(gin.Recovery(), cors.New(cors.Config{
 		AllowOrigins:     []string{env("CORS_ALLOW_ORIGIN", "http://localhost:5173")},
@@ -98,6 +104,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"service": "api", "version": "0.2.0", "environment": env("APP_ENV", "development")})
 	})
 	authHandler.RegisterRoutes(api)
+	catalogHandler.RegisterRoutes(api, authHandler.Authenticate())
 	logger.Info("api started", "port", port)
 	if err := r.Run(":" + port); err != nil {
 		logger.Error("api stopped", "error", err)
