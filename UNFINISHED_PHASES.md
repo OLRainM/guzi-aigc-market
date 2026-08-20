@@ -144,6 +144,7 @@ Docker Compose 可用
 - [x] 配置域名 DNS 指向服务器公网 IP
 - [x] 安装并配置宿主机 Nginx
 - [x] Web 站点反向代理到前端容器
+- [x] 网站底部展示备案号并链接至工信部备案系统
 - [x] `/api/` 反向代理到 Go API，并保留 `/api` 前缀
 - [ ] 域名重新备案，解除阿里云 `Non-compliance ICP Filing` 公网拦截
 - [ ] 配置 HTTPS 证书自动申请和续期（备案完成后继续）
