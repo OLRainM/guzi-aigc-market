@@ -3,7 +3,7 @@
 - **项目**：谷子交易与 3D/AIGC 平台
 - **记录日期**：2026-08-31
 - **当前阶段**：阶段 2 CentOS 运行环境已完成；商品资产上传、公网 IP 入口、网页 GLB 3D 查看器和 AI 生成最小 HTTP 闭环已完成
-- **下一目标**：部署含生成闭环的当前版本，并决定是否接入真实 3D Provider
+- **下一目标**：将含生成闭环的当前版本部署到公网；真实 3D Provider 通过 `GENERATION_PROVIDER=http` 手动接入
 
 ## 当前进行中的任务
 
@@ -12,8 +12,8 @@
 - **开始时间**：2026-08-31
 - **当前进度状态**：已完成
 - **已完成进展**：创建任务、Redis Streams 入队、Worker Mock 消费、轮询状态、GLB 落盘预览，以及超时、失败、重试、取消均已打通。工作台可提交提示词并每 2 秒轮询。
-- **当前阻塞事项**：当前版本尚未重新部署到公网；真实 3D Provider 尚未接入。
-- **下一步**：部署含生成闭环的当前版本，或接入真实 Provider。
+- **当前阻塞事项**：真实 3D Provider 需手动填写 `PROVIDER_BASE_URL` 后才会启用。
+- **下一步**：部署含生成闭环的当前版本；接入真实 Provider 时按 `apps/worker/PROVIDER.md` 配置。
 
 ## 远端只读环境监测（2026-08-31）
 
@@ -256,7 +256,7 @@ Docker Compose 可用
 - [x] Redis Streams 任务入队
 - [x] Python AI Worker 业务执行闭环（消息校验入口已完成）
 - [x] Mock Provider 及契约测试
-- [ ] 第三方文本生成 3D Provider Adapter
+- [x] 第三方文本生成 3D Provider HTTP 适配器（手动配置 `PROVIDER_BASE_URL`，契约见 `apps/worker/PROVIDER.md`）
 - [x] 任务轮询、超时、失败、重试和取消
 - [x] 生成结果存储为 GLB 资产
 - [ ] 从 AI 结果一键带入商品发布

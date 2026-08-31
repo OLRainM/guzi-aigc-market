@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import time
 from typing import Any, Mapping, Protocol
 
 from contracts import GenerationJobMessage
@@ -57,7 +60,7 @@ class HTTPAPIClient:
         response = await self._client.post(path, json=dict(json))
         return self._parse(response)
 
-    def _parse(self, response: httpx.Response) -> dict[str, Any]:
+    def _parse(self, response: Any) -> dict[str, Any]:
         try:
             payload = response.json()
         except ValueError as exc:
@@ -89,6 +92,8 @@ class JobProcessor:
     def __init__(self, api: APIClient, provider: GenerationProvider | None = None) -> None:
         self.api = api
         self.provider = provider or MockProvider()
+        self.poll_interval = float(os.getenv("PROVIDER_POLL_INTERVAL", "2"))
+        self.poll_timeout = float(os.getenv("PROVIDER_POLL_TIMEOUT", "180"))
 
     async def process(self, message: GenerationJobMessage) -> str:
         job_id = str(message.job_id)
@@ -100,10 +105,12 @@ class JobProcessor:
                 return status
             if status != "RUNNING":
                 raise RuntimeError(f"unexpected claim status: {status}")
-            prompt = str((claimed.get("job") or {}).get("raw_prompt") or "")
+            job = claimed.get("job") if isinstance(claimed.get("job"), dict) else {}
+            prompt = str(job.get("raw_prompt") or "")
+            parameters = {"attempt": attempt, "product_type": job.get("product_type") or ""}
             await self._progress(job_id, attempt, "GENERATING", 40)
-            submission = await self.provider.submit(prompt, {"attempt": attempt})
-            progress = await self.provider.get_status(submission.provider_job_id)
+            submission = await self.provider.submit(prompt, parameters)
+            progress = await self._wait_for_success(job_id, attempt, submission.provider_job_id)
             if progress.status != ProviderStatus.SUCCEEDED:
                 if progress.error:
                     raise progress.error
@@ -140,6 +147,24 @@ class JobProcessor:
         except Exception as exc:
             await self._fail(job_id, attempt, "WORKER_ERROR", str(exc), retryable=True)
             return "FAILED"
+
+    async def _wait_for_success(self, job_id: str, attempt: int, provider_job_id: str):
+        deadline = time.monotonic() + self.poll_timeout
+        while True:
+            progress = await self.provider.get_status(provider_job_id)
+            mapped = 40 + int(max(0, min(100, progress.progress)) * 0.3)
+            await self._progress(job_id, attempt, "GENERATING", mapped)
+            if progress.status == ProviderStatus.SUCCEEDED:
+                return progress
+            if progress.status == ProviderStatus.CANCELED:
+                raise JobCanceled()
+            if progress.status == ProviderStatus.FAILED:
+                if progress.error:
+                    raise progress.error
+                raise ProviderError(ProviderErrorCode.UNKNOWN_PROVIDER_ERROR, "provider failed", retryable=True)
+            if time.monotonic() >= deadline:
+                raise ProviderError(ProviderErrorCode.PROVIDER_TIMEOUT, "provider polling timed out", retryable=True)
+            await asyncio.sleep(self.poll_interval)
 
     async def _progress(self, job_id: str, attempt: int, stage: str, progress: int) -> None:
         payload = await self.api.progress(job_id, attempt, stage, progress)
