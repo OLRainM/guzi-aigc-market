@@ -1,7 +1,7 @@
 import { StrictMode, Suspense, createContext, lazy, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { apiBase, assetSrc, priceLabel, request, refreshSession, setAccessToken, statusLabel, type AuthPayload, type Product, type ProductList, type User } from './api';
+import { apiBase, assetSrc, generationStatusLabel, newIdempotencyKey, priceLabel, request, refreshSession, setAccessToken, statusLabel, type AuthPayload, type GenerationJob, type GenerationJobList, type Product, type ProductList, type User } from './api';
 import './styles.css';
 
 const ModelViewer = lazy(() => import('./ModelViewer').then(module => ({ default: module.ModelViewer })));
@@ -21,8 +21,96 @@ function AuthProvider({ children }: { children: ReactNode }) {
 }
 function useAuth() { const value = useContext(AuthContext); if (!value) throw new Error('AuthProvider missing'); return value; }
 
-function Home() { const [status, setStatus] = useState('检查中'); useEffect(() => { fetch(`${apiBase}/healthz`).then(r => setStatus(r.ok ? 'API 正常' : 'API 异常')).catch(() => setStatus('API 未连接')); }, []); return <main><p className="eyebrow">AIGC 3D PLATFORM</p><h1>谷子交易与 3D 展示平台</h1><p className="lead">账户、商品、图片/GLB 上传和网页 3D 预览已接入。登录后可发布商品并在详情页旋转查看模型。</p><div className="status">{status}</div></main>; }
-function Placeholder({ title }: { title: string }) { return <main><p className="eyebrow">WORKSPACE</p><h1>{title}</h1><p className="lead">该业务模块将在后续阶段实现。</p></main>; }
+function Home() { const [status, setStatus] = useState('检查中'); useEffect(() => { fetch(`${apiBase}/healthz`).then(r => setStatus(r.ok ? 'API 正常' : 'API 异常')).catch(() => setStatus('API 未连接')); }, []); return <main><p className="eyebrow">AIGC 3D PLATFORM</p><h1>谷子交易与 3D 展示平台</h1><p className="lead">账户、商品、图片/GLB 上传、网页 3D 预览和 AI 生成任务已接入。登录后可在工作台提交提示词并轮询生成结果。</p><div className="status">{status}</div></main>; }
+function GenerationWorkspace() {
+  const [prompt, setPrompt] = useState('a collectible figure');
+  const [productType, setProductType] = useState('手办');
+  const [jobs, setJobs] = useState<GenerationJob[]>([]);
+  const [activeId, setActiveId] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const active = jobs.find(job => job.id === activeId) ?? jobs[0] ?? null;
+  const mergeJob = (next: GenerationJob) => setJobs(current => {
+    const exists = current.some(job => job.id === next.id);
+    return exists ? current.map(job => job.id === next.id ? next : job) : [next, ...current];
+  });
+  const loadJob = (id: string) => request<{ job: GenerationJob }>(`/api/v1/generation-jobs/${id}`).then(body => mergeJob(body.job));
+  const load = () => request<GenerationJobList>('/api/v1/generation-jobs?page=1&page_size=20').then(body => {
+    setJobs(body.items);
+    setActiveId(current => {
+      const nextId = current && body.items.some(job => job.id === current) ? current : (body.items[0]?.id ?? '');
+      if (nextId) void loadJob(nextId);
+      return nextId;
+    });
+  }).catch(reason => setError(reason instanceof Error ? reason.message : '加载失败'));
+  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    if (!active || ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(active.status)) return;
+    const timer = window.setInterval(() => {
+      loadJob(active.id).catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [active?.id, active?.status]);
+  const create = async (event: FormEvent) => {
+    event.preventDefault(); setError(''); setSubmitting(true);
+    try {
+      const body = await request<{ job: GenerationJob }>('/api/v1/generation-jobs', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': newIdempotencyKey() },
+        body: JSON.stringify({ prompt, product_type: productType, provider: 'mock', copyright_confirmed: true }),
+      });
+      mergeJob(body.job);
+      setActiveId(body.job.id);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '创建失败'); } finally { setSubmitting(false); }
+  };
+  const act = async (path: 'cancel' | 'retry') => {
+    if (!active) return; setError('');
+    try {
+      const body = await request<{ job: GenerationJob }>(`/api/v1/generation-jobs/${active.id}/${path}`, { method: 'POST' });
+      mergeJob(body.job);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败'); }
+  };
+  const model = active?.outputs.find(output => output.format === 'glb' && output.content_url);
+  return (
+    <main className="wide">
+      <p className="eyebrow">WORKSPACE</p>
+      <h1>AI 工作台</h1>
+      <p className="lead">提交提示词后会创建生成任务，页面每 2 秒轮询状态。Mock Provider 成功后可直接预览 GLB。</p>
+      <form className="auth-card publish-form" onSubmit={create}>
+        <label>提示词<textarea value={prompt} onChange={e => setPrompt(e.target.value)} maxLength={2000} required /></label>
+        <label>商品类型<input value={productType} onChange={e => setProductType(e.target.value)} maxLength={64} required /></label>
+        {error && <p className="error" role="alert">{error}</p>}
+        <button disabled={submitting}>{submitting ? '提交中…' : '创建生成任务'}</button>
+      </form>
+      <section className="generation-layout">
+        <div className="job-list">
+          {jobs.length === 0 && <p className="muted">还没有生成任务。</p>}
+          {jobs.map(job => (
+            <button key={job.id} className={`job-item${job.id === active?.id ? ' is-active' : ''}`} onClick={() => { setActiveId(job.id); void loadJob(job.id); }}>
+              <strong>{generationStatusLabel(job.status)}</strong>
+              <span>{job.raw_prompt}</span>
+              <em>{job.progress}%</em>
+            </button>
+          ))}
+        </div>
+        {active && (
+          <div className="auth-card publish-form">
+            <p className="muted">{generationStatusLabel(active.status)} · {active.stage} · 第 {active.attempt}/{active.max_attempts} 次</p>
+            <div className="viewer-progress" role="status"><span>{active.progress}%</span><i style={{ width: `${active.progress}%` }} /></div>
+            {active.error && <p className="error" role="alert">{active.error.message}</p>}
+            <div className="viewer-actions">
+              {(active.status === 'QUEUED' || active.status === 'RUNNING') && <button className="secondary" onClick={() => void act('cancel')}>取消</button>}
+              {active.status === 'FAILED' && active.attempt < active.max_attempts && <button onClick={() => void act('retry')}>重试</button>}
+            </div>
+            {model
+              ? <Suspense fallback={<div className="viewer-progress" role="status"><span>正在准备 3D 预览</span></div>}><ModelViewer model={{ id: model.id, kind: 'MODEL', mime_type: model.mime_type, size_bytes: model.size_bytes, sha256: '', original_name: `${active.id}.glb`, content_url: model.content_url! }} compact /></Suspense>
+              : <p className="muted">生成完成后将在这里预览 GLB。</p>}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
 
 function Market() {
   const [data, setData] = useState<ProductList | null>(null);
@@ -107,5 +195,5 @@ function Protected({ children }: { children: ReactNode }) { const auth = useAuth
 function Profile() { const auth = useAuth(); const roles = auth.user?.roles.map(role => role.name).join('、'); return <main className="wide"><p className="eyebrow">PROFILE</p><h1>{auth.user?.username}</h1><p className="lead">{auth.user?.email || '未填写邮箱'}</p><div className="profile-row"><span>账户状态</span><strong>{auth.user?.status}</strong></div><div className="profile-row"><span>角色</span><strong>{roles}</strong></div><MyListings /><button className="secondary" onClick={() => void auth.logout()}>退出登录</button></main>; }
 function Navigation() { const auth = useAuth(); return <nav><div className="nav-links"><Link to="/">首页</Link><Link to="/market">商品市场</Link><Link to="/sell">发布商品</Link><Link to="/workspace/generation">AI 工作台</Link><Link to="/me">个人中心</Link></div><Link className="account-link" to={auth.user ? '/me' : '/login'}>{auth.user?.username ?? '登录 / 注册'}</Link></nav>; }
 function Footer() { return <footer>AIGC 3D Platform</footer>; }
-function App() { return <AuthProvider><Navigation/><Routes><Route path="/" element={<Home/>}/><Route path="/login" element={<AuthPage/>}/><Route path="/market" element={<Market/>}/><Route path="/sell" element={<Protected><Publish/></Protected>}/><Route path="/products/:id" element={<ProductDetail/>}/><Route path="/workspace/generation" element={<Protected><Placeholder title="AI 工作台"/></Protected>}/><Route path="/me" element={<Protected><Profile/></Protected>}/></Routes><Footer/></AuthProvider>; }
+function App() { return <AuthProvider><Navigation/><Routes><Route path="/" element={<Home/>}/><Route path="/login" element={<AuthPage/>}/><Route path="/market" element={<Market/>}/><Route path="/sell" element={<Protected><Publish/></Protected>}/><Route path="/products/:id" element={<ProductDetail/>}/><Route path="/workspace/generation" element={<Protected><GenerationWorkspace/></Protected>}/><Route path="/me" element={<Protected><Profile/></Protected>}/></Routes><Footer/></AuthProvider>; }
 createRoot(document.getElementById('root')!).render(<StrictMode><BrowserRouter><App/></BrowserRouter></StrictMode>);

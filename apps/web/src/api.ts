@@ -11,6 +11,22 @@ export type Product = {
   cover_asset_id?: string; model_asset_id?: string; images: AssetFile[]; model?: AssetFile | null;
 };
 export type ProductList = { items: Product[]; page: number; page_size: number; total: number };
+export type GenerationOutput = { id: string; output_type: string; format: string; mime_type: string; size_bytes: number; content_url?: string };
+export type GenerationJob = {
+  id: string; status: string; stage: string; progress: number; raw_prompt: string; provider: string;
+  attempt: number; max_attempts: number; outputs: GenerationOutput[];
+  error?: { code: string; message: string; retryable: boolean } | null;
+  created_at: string; updated_at: string;
+};
+export type GenerationJobList = { items: GenerationJob[]; page: number; page_size: number; total: number };
+
+export function newIdempotencyKey() {
+  return crypto.randomUUID();
+}
+
+export function generationStatusLabel(status: string) {
+  return ({ QUEUED: '排队中', RUNNING: '生成中', SUCCEEDED: '已完成', FAILED: '失败', CANCELED: '已取消' } as Record<string, string>)[status] ?? status;
+}
 
 let accessToken = '';
 let refreshPromise: Promise<AuthPayload> | null = null;
