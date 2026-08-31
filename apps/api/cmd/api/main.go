@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"aigc-3d-platform/apps/api/internal/asset"
 	"aigc-3d-platform/apps/api/internal/auth"
 	"aigc-3d-platform/apps/api/internal/catalog"
 	"github.com/gin-contrib/cors"
@@ -83,7 +84,12 @@ func main() {
 		logger.Error("auth initialization failed", "error", err)
 		os.Exit(1)
 	}
-	catalogHandler, err := catalog.New(db)
+	assetService, err := asset.New(db, asset.NewMinIOStore(mc, deps.bucket), deps.bucket)
+	if err != nil {
+		logger.Error("asset initialization failed", "error", err)
+		os.Exit(1)
+	}
+	catalogHandler, err := catalog.New(db, assetService)
 	if err != nil {
 		logger.Error("catalog initialization failed", "error", err)
 		os.Exit(1)
@@ -96,19 +102,29 @@ func main() {
 		ExposeHeaders:    []string{"X-Request-ID"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
-	}), requestID())
+	}), requestID(), securityHeaders())
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	r.GET("/readyz", readyHandler(deps))
 	api := r.Group("/api/v1")
 	api.GET("/version", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"service": "api", "version": "0.2.0", "environment": env("APP_ENV", "development")})
+		c.JSON(http.StatusOK, gin.H{"service": "api", "version": "0.3.0", "environment": env("APP_ENV", "development")})
 	})
 	authHandler.RegisterRoutes(api)
-	catalogHandler.RegisterRoutes(api, authHandler.Authenticate())
+	catalogHandler.RegisterRoutes(api, authHandler.Authenticate(), authHandler.ResolveUser)
 	logger.Info("api started", "port", port)
 	if err := r.Run(":" + port); err != nil {
 		logger.Error("api stopped", "error", err)
 		os.Exit(1)
+	}
+}
+
+func securityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		c.Next()
 	}
 }
 

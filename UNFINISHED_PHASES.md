@@ -1,9 +1,41 @@
 # 未完成阶段与后续执行计划
 
 - **项目**：谷子交易与 3D/AIGC 平台
-- **记录日期**：2026-08-20
-- **当前阶段**：生产基础服务已部署并通过健康检查；HTTPS 因域名备案问题暂缓；P0 商品基础 API 已完成
-- **下一目标**：实现商品图片、GLB 上传及 MinIO/S3 资产元数据与安全校验
+- **记录日期**：2026-08-31
+- **当前阶段**：商品资产上传、公网 IP 入口和网页 GLB 3D 查看器已完成；AI 生成 HTTP 闭环仍待推进
+- **下一目标**：推进 AI 生成最小 HTTP 闭环（任务入队、轮询、结果落为 GLB）
+
+## 当前进行中的任务
+
+- **任务名称**：GLB 3D 查看器
+- **任务描述**：在商品详情和发布页接入 Three.js / React Three Fiber 网页预览，支持旋转、缩放、重置视角、全屏，以及加载进度、错误提示、图片降级和 20 MB 限制。
+- **开始时间**：2026-08-31
+- **当前进度状态**：已完成
+- **已完成进展**：新增 `apps/web/src/ModelViewer.tsx`；商品详情优先展示 3D 预览，发布草稿上传 GLB 后即可预览；查看器按需拆包，主包约 243 kB，Three.js 独立 chunk。前端仍为 7 个页面路由。
+- **当前阻塞事项**：AI 生成 HTTP 闭环尚未实现；3D 查看器尚未重新部署到公网。
+- **下一步**：实现 AI 生成最小 HTTP 闭环（创建任务、入队、轮询、结果存储为 GLB）。
+
+## 远端只读环境监测（2026-08-31）
+
+- SSH 已通：`root` 登录成功；系统为 Alibaba Cloud Linux 4.0.5，x86_64，2 vCPU / 3.5Gi 内存 / 根盘 40G（约 33%），项目目录 `/opt/aigc-3d-platform`。
+- Docker 24.0.9、Compose 2.26.1、Buildx、Git 已安装；`docker` 开机启动；`deploy` 用户在 `docker` 组。已配置多家镜像加速。
+- 六个容器均 `healthy`（已运行约 11–12 天）：MySQL / Redis / MinIO / API / Worker / Web。数据卷 `mysql-data`、`redis-data`、`minio-data` 存在。
+- 内部端口均绑定 `127.0.0.1`（3306/6379/9000/9001/8080/8000/5173）。公网监听为宿主机 Nginx `:80` 与 SSH `:22`；无 `:443`。`firewalld` 未启用。
+- 本机与服务器访问 `http://<公网IP>/` 返回前端 200；API 直连 `127.0.0.1:8080/healthz`、`/readyz` 为 200，依赖检查 mysql/redis/minio 均为 ok。
+- 与当前仓库不一致、影响验收的问题：
+  1. 远端 `WEB_PORT=127.0.0.1:5173`，Web 容器未直接占用 80；公网入口是宿主机 Nginx，且 `server_name` 为域名，不是 IP 统一入口。
+  2. 公网 `/healthz` 返回前端 HTML，不是 API JSON；公网 `/api/healthz` 被转到 Go 的 `/api/healthz` 因而 404（API 实际在 `/healthz`）。
+  3. Web 容器内 Nginx 仍是旧配置，没有仓库里的 `/api/`、`/healthz`、`/readyz` 反代。
+  4. `.env` 中 `COOKIE_SECURE=true`，但服务器没有 HTTPS，HTTP IP 下 Refresh Cookie 会被浏览器丢弃。
+  5. `CORS_ALLOW_ORIGIN` 指向域名 HTTPS；`vm.overcommit_memory=0`；Docker 未配日志轮转；未见备份目录。
+  6. 远端代码时间戳为 8 月 18–20 日，需重新部署才能带上本地商品资产上传等更新。
+
+## 远端部署验收（2026-08-31）
+
+- 已备份到 `/opt/backup/aigc-3d-platform-20260831-161024.tar.gz`；宿主机 Nginx 已停止并禁用；公网 80 改由 Web 容器占用。
+- 远端 `.env` 已改为 `WEB_PORT=80`、`COOKIE_SECURE=false`、`CORS_ALLOW_ORIGIN=http://8.154.28.98`、`VITE_API_BASE_URL=`；`vm.overcommit_memory=1`；Docker 日志轮转 `json-file 10m×3`。
+- 当前代码已同步并重建：六个容器均 `healthy`。API `version=0.3.0`，`APP_ENV=production`。
+- 本机与公网验收：`/` 返回前端 200；`/healthz`、`/readyz`、`/api/v1/version` 均为 API JSON 200。注册/登录/刷新返回 `HttpOnly; SameSite=Lax` 的 `refresh_token`（无 `Secure`），退出 204。
 
 > 本文档同步记录各阶段完成状态和剩余工作。远程连接所需的服务器地址、账号、密钥和密码不写入仓库，也不要提交到 Git。
 
@@ -23,10 +55,14 @@
 - [x] MySQL、Redis、MinIO、API、Worker、Web 六个容器均通过健康检查
 - [x] MinIO 健康检查改用 `/minio/health/live`
 - [x] Go 与 Python 镜像构建网络配置已修复并同步到仓库
-- [x] Nginx 已完成 Web 与 `/api/` 反向代理，HTTP 域名可达
+- [x] Web 容器 Nginx 已完成 Web 与 `/api/` 同源反向代理，支持公网 IP 直接访问
 - [x] 商品模型、迁移、CRUD、搜索筛选、所有权校验和状态流转已完成
 - [x] 商品输入边界与状态机测试已通过
-- [ ] HTTPS 证书申请暂缓：域名需重新备案，公网 HTTP 请求当前被阿里云拦截
+- [x] 商品图片/GLB 上传、MinIO 资产元数据、文件校验和内容读取已完成
+- [x] 发布商品页、市场列表、商品详情和我的发布已接入资产
+- [x] 商品详情和发布页已接入 GLB 3D 查看器（旋转、缩放、重置、全屏、进度、错误降级）
+- [x] API 与 Web 已配置基础安全响应头
+- [x] 域名、DNS、备案和 HTTPS 已从当前 MVP 部署范围移除
 
 ## 二、阶段 1：确认远程 CLI 与服务器连接
 
@@ -58,14 +94,14 @@
 
 ### 待办
 
-- [ ] 安装并启用 Docker Engine
-- [ ] 安装 Docker Compose Plugin、Buildx、Git、Curl、OpenSSL 等工具
-- [ ] 将部署用户加入 `docker` 用户组并重新登录确认
-- [ ] 配置 Docker 开机启动
-- [ ] 检查 Docker Hub 或镜像源访问能力
+- [x] 安装并启用 Docker Engine
+- [x] 安装 Docker Compose Plugin、Buildx、Git、Curl、OpenSSL 等工具
+- [x] 将部署用户加入 `docker` 用户组并重新登录确认
+- [x] 配置 Docker 开机启动
+- [x] 检查 Docker Hub 或镜像源访问能力
 - [ ] 配置 Redis 所需的 `vm.overcommit_memory=1`
 - [ ] 配置 Docker 容器日志轮转，避免磁盘被日志占满
-- [ ] 配置 `firewalld`，仅开放 SSH、HTTP、HTTPS 等必要端口
+- [ ] 配置 `firewalld`，仅开放 SSH 和 HTTP 80
 - [ ] 不向公网开放 MySQL、Redis 和 MinIO 内部管理端口
 - [ ] 创建项目部署目录和备份目录
 - [ ] 配置服务器时间同步、磁盘空间告警和基础资源检查
@@ -95,9 +131,9 @@ Docker Compose 可用
 - [x] 配置生产数据库名、用户名和随机密码
 - [x] 配置 Redis 网络隔离策略
 - [x] 配置 MinIO 管理账号和随机密码
-- [x] 配置前端 API 地址为 `/api` 并设置 CORS 来源
-- [x] 配置正式域名 `olraingin.com`
-- [ ] 设置 `COOKIE_SECURE=true`（备案完成并启用 HTTPS 后）
+- [x] 配置前端 API 为同源 `/api`，无需写死域名或服务器 IP
+- [x] 配置公网 IP + `WEB_PORT` 统一访问入口
+- [x] HTTP IP 方案保持 `COOKIE_SECURE=false`；正式启用 HTTPS 时再切换为 `true`
 - [x] 限制远端 `.env` 文件权限和所属组
 - [x] 确认生产环境没有使用开发默认 JWT 密钥
 - [x] 确认敏感配置不会被提交到 Git 或写入日志
@@ -124,7 +160,7 @@ Docker Compose 可用
 - [x] 检查 `/healthz`，API 返回 `200 OK`
 - [ ] 检查 `/readyz`
 - [ ] 检查 `/api/v1/version`
-- [x] 检查 Web 页面，容器端口与 HTTP 域名均返回 `200 OK`
+- [ ] 检查 Web 页面、`/healthz` 和 `/api/` 通过公网 IP 入口返回预期结果
 - [ ] 验证注册、登录、刷新会话和退出登录
 - [ ] 验证服务重启后数据库、Redis 和对象存储数据仍然存在
 - [ ] 将本地新增的商品 API 版本重新部署到远端
@@ -133,33 +169,32 @@ Docker Compose 可用
 
 当前本地曾遇到 Docker Hub 拉取 `minio/minio:latest` 时出现 EOF。远端部署时需要先单独验证镜像仓库网络；如果仍失败，应优先处理服务器出口网络、代理或镜像源，不要直接修改业务代码绕过问题。
 
-## 六、阶段 5：反向代理与 HTTPS
+## 六、阶段 5：公网 IP 与同源反向代理
 
 ### 目标
 
-不直接暴露内部服务，使用域名和 HTTPS 提供可访问的 Web/API 服务。
+仅通过服务器公网 IP 和 Web 端口提供 Web/API 同源入口，不依赖域名、DNS、备案或 TLS 证书；内部服务不直接暴露到公网。
 
 ### 待办
 
-- [x] 配置域名 DNS 指向服务器公网 IP
-- [x] 安装并配置宿主机 Nginx
-- [x] Web 站点反向代理到前端容器
-- [x] 网站底部展示备案号并链接至工信部备案系统
-- [x] `/api/` 反向代理到 Go API，并保留 `/api` 前缀
-- [ ] 域名重新备案，解除阿里云 `Non-compliance ICP Filing` 公网拦截
-- [ ] 配置 HTTPS 证书自动申请和续期（备案完成后继续）
-- [ ] HTTPS 生效后启用 `COOKIE_SECURE=true`
+- [x] Web 容器 Nginx 接受任意 IP Host
+- [x] Web 站点由 `WEB_PORT` 暴露统一入口
+- [x] `/api/`、`/healthz` 和 `/readyz` 反向代理到 Go API
+- [x] 前端默认使用同源相对 API 地址
+- [x] 移除页面备案号和域名专属配置
 - [x] 配置上传请求体大小限制为 `50m`
-- [x] MinIO API 与控制台仅绑定 `127.0.0.1`
-- [ ] 配置安全响应头
-- [ ] 重新验证跨域、登录 Cookie 和刷新令牌
+- [x] MySQL、Redis 和 MinIO 仅绑定 `127.0.0.1`
+- [x] API 与 Worker 仅在 Compose 内部网络暴露
+- [x] 远端设置 `WEB_PORT=80`，并仅开放 SSH 与 TCP 80
+- [x] 配置安全响应头（API 中间件与 Web Nginx 已写入仓库；公网入口已部署验收）
+- [x] 重新验证公网 IP 下的登录 Cookie 和刷新令牌
 
 ### 验收标准
 
-- 用户通过 HTTPS 域名访问 Web
-- API 和 Web 使用同一套生产域名策略
-- Refresh Cookie 能够安全发送且不会被浏览器拦截
-- MySQL、Redis、MinIO 内部端口不对公网开放
+- 用户通过 `http://<服务器公网IP>` 访问 Web
+- API 和 Web 使用同一 IP、端口和 `/api/` 路径
+- Refresh Cookie 在 HTTP IP 入口下能够发送且不会被浏览器拦截
+- MySQL、Redis、MinIO、API 和 Worker 内部端口不对公网开放
 
 ## 七、阶段 6：核心业务 P0 开发
 
@@ -170,23 +205,23 @@ Docker Compose 可用
 - [x] 商品模型、GORM 自动迁移和 CRUD API
 - [x] 商品列表、分页、关键词搜索及 IP、分类、成色、交易类型、价格筛选
 - [x] 商品详情和 `DRAFT → PUBLISHED → OFF_SHELF` 状态流转
-- [ ] 商品图片上传和 GLB 上传
-- [ ] MinIO/S3 资产元数据记录
-- [ ] 文件类型、MIME、文件头、大小和归属校验
+- [x] 商品图片上传和 GLB 上传
+- [x] MinIO/S3 资产元数据记录
+- [x] 文件类型、MIME、文件头、大小和归属校验
 - [x] 商品编辑、草稿删除、发布、下架和所有权校验
 - [x] 商品输入校验和状态机单元测试
 
 ### 3D 展示
 
-- [ ] Three.js/React Three Fiber GLB 查看器
-- [ ] 旋转、缩放、重置视角和全屏
-- [ ] 加载进度、错误提示和图片降级
-- [ ] 20 MB GLB 大小限制和异常模型处理
+- [x] Three.js/React Three Fiber GLB 查看器
+- [x] 旋转、缩放、重置视角和全屏
+- [x] 加载进度、错误提示和图片降级
+- [x] 20 MB GLB 大小限制和异常模型处理
 
 ### 收藏与个人中心
 
 - [ ] 收藏与取消收藏
-- [ ] 我的发布
+- [x] 我的发布
 - [ ] 我的收藏
 - [ ] 基础用户资料
 - [ ] 收货地址管理
@@ -208,8 +243,8 @@ Docker Compose 可用
 - [ ] Prompt 优化与结构化参数展示
 - [ ] 用户确认优化结果
 - [ ] Redis Streams 任务入队
-- [ ] Python AI Worker
-- [ ] Mock Provider
+- [ ] Python AI Worker 业务执行闭环（消息校验入口已完成）
+- [x] Mock Provider 及契约测试
 - [ ] 第三方文本生成 3D Provider Adapter
 - [ ] 任务轮询、超时、失败、重试和取消
 - [ ] 生成结果存储为 GLB 资产
@@ -238,13 +273,11 @@ Docker Compose 可用
 
 ## 九、建议执行顺序
 
-1. 阶段 1：确认 CLI 和 SSH 连接
-2. 阶段 2：配置 CentOS Docker 环境
-3. 阶段 3：创建生产配置和密钥
-4. 阶段 4：部署当前版本并完成健康检查
-5. 阶段 5：配置域名、反向代理和 HTTPS
-6. 阶段 6：按“商品与资产 → 3D → 交易 → AI → 管理”完成 P0
-7. 阶段 7：执行发布验收、备份和内测
+1. 补齐阶段 2 未确认的 CentOS Docker、安全与运维基线
+2. 重新部署当前版本并完成阶段 4 剩余健康检查
+3. 完成阶段 5 的公网 IP、防火墙和 Cookie 验收
+4. 阶段 6 按“3D 展示 → 收藏与个人中心 → 交易 → AI → 管理”完成剩余 P0
+5. 阶段 7 执行发布验收、备份和内测
 
 ## 十、远程操作安全约定
 

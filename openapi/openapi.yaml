@@ -1,0 +1,325 @@
+openapi: 3.0.3
+info:
+  title: AIGC 3D Platform API
+  version: 0.4.0
+  description: 生成任务契约与商品资产上传接口。生成任务 HTTP 实现仍属于后续阶段。
+  license:
+    name: Proprietary
+    url: https://example.com/proprietary-license
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /products/mine:
+    get:
+      operationId: listMyProducts
+      summary: 查询当前用户发布的商品
+      responses:
+        '200':
+          description: 当前用户的商品列表
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /products/{product_id}/images:
+    post:
+      operationId: uploadProductImage
+      summary: 上传商品图片
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: 图片已保存并绑定到商品
+        '400': { $ref: '#/components/responses/InvalidArgument' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: 超出图片数量限制
+  /products/{product_id}/model:
+    post:
+      operationId: uploadProductModel
+      summary: 上传或替换商品 GLB
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: GLB 已保存并绑定到商品
+        '400': { $ref: '#/components/responses/InvalidArgument' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /products/{product_id}/assets/{asset_id}/content:
+    get:
+      operationId: getProductAssetContent
+      summary: 读取商品图片或 GLB 内容
+      security: []
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: asset_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 文件内容
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+            model/gltf-binary: { schema: { type: string, format: binary } }
+        '403': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/JobNotFound' }
+  /generation-jobs:
+    post:
+      operationId: createGenerationJob
+      summary: 创建生成任务
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGenerationJobRequest'
+      responses:
+        '202':
+          description: 任务已持久化并等待处理
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateGenerationJobResponse'
+        '400': { $ref: '#/components/responses/InvalidArgument' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/QueueUnavailable' }
+    get:
+      operationId: listGenerationJobs
+      summary: 查询当前用户的生成任务
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/JobStatus' }
+      responses:
+        '200':
+          description: 任务列表，按创建时间倒序
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs, pagination]
+                properties:
+                  jobs:
+                    type: array
+                    items: { $ref: '#/components/schemas/GenerationJob' }
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /generation-jobs/{job_id}:
+    get:
+      operationId: getGenerationJob
+      summary: 查询当前用户的单个生成任务
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: 任务详情
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                properties:
+                  job: { $ref: '#/components/schemas/GenerationJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/JobNotFound' }
+  /generation-jobs/{job_id}/cancel:
+    post:
+      operationId: cancelGenerationJob
+      summary: 取消任务（预留，阶段 1 后实现）
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: 取消请求已接受
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                properties:
+                  job: { $ref: '#/components/schemas/GenerationJob' }
+        '404': { $ref: '#/components/responses/JobNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /generation-jobs/{job_id}/retry:
+    post:
+      operationId: retryGenerationJob
+      summary: 重试失败任务（预留，阶段 1 后实现）
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '202':
+          description: 任务已重新排队
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                properties:
+                  job: { $ref: '#/components/schemas/GenerationJob' }
+        '404': { $ref: '#/components/responses/JobNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    JobStatus:
+      type: string
+      enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELED]
+    JobStage:
+      type: string
+      enum: [QUEUED, OPTIMIZING_PROMPT, SUBMITTING_PROVIDER, GENERATING, FETCHING_OUTPUT, STORING_OUTPUT, COMPLETED]
+    CreateGenerationJobRequest:
+      type: object
+      additionalProperties: false
+      required: [prompt, product_type, provider, copyright_confirmed]
+      properties:
+        prompt: { type: string, minLength: 1, maxLength: 2000 }
+        product_type: { type: string, minLength: 1, maxLength: 64 }
+        provider: { type: string, enum: [mock] }
+        parameters: { type: object, additionalProperties: true }
+        copyright_confirmed: { type: boolean, enum: [true] }
+    CreateGenerationJobResponse:
+      type: object
+      required: [job, status_url]
+      properties:
+        job: { $ref: '#/components/schemas/GenerationJob' }
+        status_url: { type: string, example: /api/v1/generation-jobs/0e225a1c-4838-46ae-a61b-03fcfc440b50 }
+    GenerationJob:
+      type: object
+      required: [id, status, stage, progress, raw_prompt, provider, attempt, max_attempts, outputs, error, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        source_job_id: { type: string, format: uuid, nullable: true }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        stage: { $ref: '#/components/schemas/JobStage' }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        raw_prompt: { type: string }
+        optimized_prompt: { type: string, nullable: true }
+        provider: { type: string }
+        attempt: { type: integer, minimum: 0 }
+        max_attempts: { type: integer, minimum: 1 }
+        outputs:
+          type: array
+          items: { $ref: '#/components/schemas/GenerationOutput' }
+        error:
+          type: object
+          allOf: [{ $ref: '#/components/schemas/JobError' }]
+          nullable: true
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time }
+    GenerationOutput:
+      type: object
+      required: [id, output_type, format, mime_type, size_bytes, sha256, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        asset_id: { type: string, format: uuid, nullable: true }
+        output_type: { type: string, enum: [MODEL, PREVIEW_IMAGE] }
+        format: { type: string }
+        mime_type: { type: string }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        sha256: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+    JobError:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        retryable: { type: boolean }
+    Pagination:
+      type: object
+      required: [page, page_size, total]
+      properties:
+        page: { type: integer, minimum: 1 }
+        page_size: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, format: int64, minimum: 0 }
+    APIError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+  responses:
+    InvalidArgument:
+      description: 参数不合法
+      content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
+    Unauthorized:
+      description: 未认证
+      content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
+    JobNotFound:
+      description: 任务不存在或当前用户无权访问
+      content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
+    Conflict:
+      description: Idempotency-Key 请求内容冲突或任务状态不允许操作
+      content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
+    TooManyRequests:
+      description: 请求过于频繁
+      content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
+    QueueUnavailable:
+      description: 任务队列暂不可用
+      content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }

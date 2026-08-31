@@ -4,6 +4,8 @@ import os
 from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
+
+from contracts import ContractError, GenerationJobMessage
 from fastapi import FastAPI, Response, status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -29,8 +31,14 @@ async def consume() -> None:
         for _, entries in messages:
             for message_id, fields in entries:
                 try:
-                    logger.info("processed stream message", extra={"message_id": message_id, "payload": fields})
+                    message = GenerationJobMessage.from_stream(fields)
+                    logger.info(
+                        "validated stream message",
+                        extra={"message_id": message_id, "job_id": str(message.job_id), "request_id": message.request_id},
+                    )
                     await client.xack(STREAM, GROUP, message_id)
+                except ContractError:
+                    logger.exception("rejected invalid stream message", extra={"message_id": message_id})
                 except Exception:
                     logger.exception("failed to process stream message", extra={"message_id": message_id})
         await asyncio.sleep(0)

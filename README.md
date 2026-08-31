@@ -11,10 +11,11 @@ docker compose up --build
 
 启动后可访问：
 
-- Web：`http://localhost:5173`（可注册、登录并进入个人中心）
-- Go API：`http://localhost:8080/healthz`、`http://localhost:8080/readyz`
-- AI Worker：`http://localhost:8000/healthz`、`http://localhost:8000/readyz`
-- MinIO 控制台：`http://localhost:9001`
+- Web：`http://localhost:5173`（可注册、登录、发布商品并上传图片/GLB）
+- 同源 API 健康检查：`http://localhost:5173/healthz`、`http://localhost:5173/readyz`
+- MinIO 控制台：`http://localhost:9001`（仅本机访问）
+
+服务器部署时在 `.env` 中设置 `WEB_PORT=80`，并在防火墙中开放 TCP 80，即可通过 `http://<服务器公网IP>` 直接访问。前端通过同一 IP 下的 `/api/` 调用 API，无需域名、DNS、TLS 证书或额外跨域配置；MySQL、Redis、MinIO、API 和 Worker 端口应仅绑定 `127.0.0.1` 或保持在 Compose 内部网络。
 
 开发环境默认凭据仅用于本地联调，部署前必须通过环境变量替换。MySQL、Redis 和 MinIO 使用 Docker 数据卷持久化，`docker compose down` 不会删除数据；不要在保留数据时使用 `docker compose down -v`。
 

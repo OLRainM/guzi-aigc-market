@@ -174,6 +174,26 @@ func CurrentUser(c *gin.Context) (*User, bool) {
 	return user, ok
 }
 
+func (h *Handler) ResolveUser(c *gin.Context) (*User, bool) {
+	if user, ok := CurrentUser(c); ok {
+		return user, true
+	}
+	header := c.GetHeader("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		return nil, false
+	}
+	claims, err := h.service.parseAccessToken(strings.TrimPrefix(header, "Bearer "))
+	if err != nil {
+		return nil, false
+	}
+	var user User
+	if err := h.service.db.Preload("Roles").First(&user, "id = ? AND status = ?", claims.Subject, "ACTIVE").Error; err != nil {
+		return nil, false
+	}
+	c.Set(userContextKey, &user)
+	return &user, true
+}
+
 func (h *Handler) register(c *gin.Context) {
 	var req credentialsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

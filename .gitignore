@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# 本机远端登录配置（含账号密码，禁止入库）
+.deploy/server.env
+
 # Node
 node_modules/
 dist/
