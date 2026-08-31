@@ -181,6 +181,12 @@ updates = {
     'MINIO_PORT': '9000',
     'MINIO_CONSOLE_PORT': '9001',
     'API_PORT': '8080',
+    'GENERATION_PROVIDER': 'mock',
+    'PROVIDER_BASE_URL': '',
+    'PROVIDER_TIMEOUT': '60',
+    'PROVIDER_POLL_INTERVAL': '2',
+    'PROVIDER_POLL_TIMEOUT': '180',
+    'GENERATION_JOB_TIMEOUT': '2m',
 }
 lines = []
 seen = set()
@@ -198,6 +204,12 @@ for raw in text.splitlines():
 for key, value in updates.items():
     if key not in seen:
         lines.append(f'{key}={value}')
+keys = {raw.split('=', 1)[0].strip() for raw in lines if raw.strip() and not raw.lstrip().startswith('#') and '=' in raw}
+if 'WORKER_INTERNAL_TOKEN' not in keys:
+    import secrets
+    lines.append('WORKER_INTERNAL_TOKEN=' + secrets.token_urlsafe(32))
+if 'PROVIDER_API_KEY' not in keys:
+    lines.append('PROVIDER_API_KEY=')
 path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 path.chmod(0o640)
 print('ENV_PATCHED')
