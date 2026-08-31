@@ -11,9 +11,9 @@
 - **任务描述**：登录用户创建生成任务、Redis Streams 入队、Worker 消费、轮询状态、结果存为 GLB，并覆盖超时、失败、重试和取消。
 - **开始时间**：2026-08-31
 - **当前进度状态**：进行中
-- **已完成进展**：已实现 `POST /api/v1/generation-jobs`：登录校验、参数校验、Idempotency-Key 幂等、进行中任务上限，以及 `generation_jobs`/`generation_outbox` 持久化。
-- **当前阻塞事项**：任务尚未写入 Redis Streams；Worker 仍只校验消息；前端工作台仍为占位页。
-- **下一步**：将 outbox 事件发布到 Redis Streams `generation_jobs`。
+- **已完成进展**：已实现 `POST /api/v1/generation-jobs` 创建任务；outbox 调度器会把 `generation.job.created` 发布到 Redis Streams `generation_jobs`，失败则退避重试。
+- **当前阻塞事项**：Worker 仍只校验消息，尚未消费任务并回写状态；前端工作台仍为占位页。
+- **下一步**：让 Python Worker 消费 `generation_jobs` 并用 Mock Provider 生成结果。
 
 ## 远端只读环境监测（2026-08-31）
 
@@ -253,7 +253,7 @@ Docker Compose 可用
 - [ ] Prompt 优化与结构化参数展示
 - [ ] 用户确认优化结果
 - [x] 创建生成任务 HTTP 接口（`POST /api/v1/generation-jobs`）
-- [ ] Redis Streams 任务入队
+- [x] Redis Streams 任务入队
 - [ ] Python AI Worker 业务执行闭环（消息校验入口已完成）
 - [x] Mock Provider 及契约测试
 - [ ] 第三方文本生成 3D Provider Adapter

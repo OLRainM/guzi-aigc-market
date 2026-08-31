@@ -50,11 +50,9 @@ func NewService(db *gorm.DB, assets *asset.Service, rdb *redis.Client, timeout t
 		timeout: timeout,
 		now:     time.Now,
 	}
-	service.publisher = noopPublisher{}
+	service.publisher = NewRedisPublisher(rdb)
 	return service, nil
 }
-
-func (s *Service) StartDispatcher() {}
 
 func (s *Service) Create(ctx context.Context, userID, idempotencyKey, requestID string, req CreateJobRequest) (*GenerationJob, error) {
 	if _, err := uuid.Parse(idempotencyKey); err != nil {
