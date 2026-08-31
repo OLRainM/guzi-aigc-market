@@ -2,18 +2,18 @@
 
 - **项目**：谷子交易与 3D/AIGC 平台
 - **记录日期**：2026-08-31
-- **当前阶段**：商品资产上传、公网 IP 入口和网页 GLB 3D 查看器已完成；AI 生成 HTTP 闭环仍待推进
-- **下一目标**：推进 AI 生成最小 HTTP 闭环（任务入队、轮询、结果落为 GLB）
+- **当前阶段**：阶段 2 CentOS 运行环境已完成；商品资产上传、公网 IP 入口和网页 GLB 3D 查看器已完成；AI 生成 HTTP 闭环进行中
+- **下一目标**：完成 AI 生成最小 HTTP 闭环（任务入队、轮询、结果落为 GLB）
 
 ## 当前进行中的任务
 
-- **任务名称**：GLB 3D 查看器
-- **任务描述**：在商品详情和发布页接入 Three.js / React Three Fiber 网页预览，支持旋转、缩放、重置视角、全屏，以及加载进度、错误提示、图片降级和 20 MB 限制。
+- **任务名称**：AI 生成最小 HTTP 闭环
+- **任务描述**：登录用户创建生成任务、Redis Streams 入队、Worker 消费、轮询状态、结果存为 GLB，并覆盖超时、失败、重试和取消。
 - **开始时间**：2026-08-31
-- **当前进度状态**：已完成
-- **已完成进展**：新增 `apps/web/src/ModelViewer.tsx`；商品详情优先展示 3D 预览，发布草稿上传 GLB 后即可预览；查看器按需拆包，主包约 243 kB，Three.js 独立 chunk。前端仍为 7 个页面路由。
-- **当前阻塞事项**：AI 生成 HTTP 闭环尚未实现；3D 查看器尚未重新部署到公网。
-- **下一步**：实现 AI 生成最小 HTTP 闭环（创建任务、入队、轮询、结果存储为 GLB）。
+- **当前进度状态**：进行中
+- **已完成进展**：已实现 `POST /api/v1/generation-jobs`：登录校验、参数校验、Idempotency-Key 幂等、进行中任务上限，以及 `generation_jobs`/`generation_outbox` 持久化。
+- **当前阻塞事项**：任务尚未写入 Redis Streams；Worker 仍只校验消息；前端工作台仍为占位页。
+- **下一步**：将 outbox 事件发布到 Redis Streams `generation_jobs`。
 
 ## 远端只读环境监测（2026-08-31）
 
@@ -36,6 +36,15 @@
 - 远端 `.env` 已改为 `WEB_PORT=80`、`COOKIE_SECURE=false`、`CORS_ALLOW_ORIGIN=http://8.154.28.98`、`VITE_API_BASE_URL=`；`vm.overcommit_memory=1`；Docker 日志轮转 `json-file 10m×3`。
 - 当前代码已同步并重建：六个容器均 `healthy`。API `version=0.3.0`，`APP_ENV=production`。
 - 本机与公网验收：`/` 返回前端 200；`/healthz`、`/readyz`、`/api/v1/version` 均为 API JSON 200。注册/登录/刷新返回 `HttpOnly; SameSite=Lax` 的 `refresh_token`（无 `Secure`），退出 204。
+
+## 阶段 2 运行环境验收（2026-08-31）
+
+- Docker 24.0.9 开机启动；Compose 2.26.1、Buildx、Git、Curl、OpenSSL 可用；`deploy` 用户在 `docker` 组。
+- `vm.overcommit_memory=1` 已写入 `/etc/sysctl.d/99-redis-overcommit.conf`；Docker 日志轮转为 `json-file 10m×3`。
+- 项目目录 `/opt/aigc-3d-platform`，备份目录 `/opt/backup` 已存在，最近备份为 `aigc-3d-platform-20260831-161024.tar.gz`。
+- `firewalld` 已启用，公网仅开放 `ssh` 与 `http`；MySQL/Redis/MinIO 仅监听 `127.0.0.1`，Web 占用 `:80`。
+- 时间同步：`chronyd` 启用且时钟已同步（Asia/Shanghai）。磁盘告警脚本每小时检查根盘使用率（阈值 80%），每日 03:15 记录磁盘/内存/容器状态。
+- 配置后六个容器均为 `healthy`；本机 `/` `/healthz` `/readyz` `/api/v1/version` 与公网 `/healthz` 均为 200。
 
 > 本文档同步记录各阶段完成状态和剩余工作。远程连接所需的服务器地址、账号、密钥和密码不写入仓库，也不要提交到 Git。
 
@@ -63,6 +72,7 @@
 - [x] 商品详情和发布页已接入 GLB 3D 查看器（旋转、缩放、重置、全屏、进度、错误降级）
 - [x] API 与 Web 已配置基础安全响应头
 - [x] 域名、DNS、备案和 HTTPS 已从当前 MVP 部署范围移除
+- [x] 阶段 2 CentOS/Alibaba Cloud Linux 运行环境基线已完成（Docker、防火墙、日志轮转、备份目录、时间同步和磁盘告警）
 
 ## 二、阶段 1：确认远程 CLI 与服务器连接
 
@@ -99,12 +109,12 @@
 - [x] 将部署用户加入 `docker` 用户组并重新登录确认
 - [x] 配置 Docker 开机启动
 - [x] 检查 Docker Hub 或镜像源访问能力
-- [ ] 配置 Redis 所需的 `vm.overcommit_memory=1`
-- [ ] 配置 Docker 容器日志轮转，避免磁盘被日志占满
-- [ ] 配置 `firewalld`，仅开放 SSH 和 HTTP 80
-- [ ] 不向公网开放 MySQL、Redis 和 MinIO 内部管理端口
-- [ ] 创建项目部署目录和备份目录
-- [ ] 配置服务器时间同步、磁盘空间告警和基础资源检查
+- [x] 配置 Redis 所需的 `vm.overcommit_memory=1`
+- [x] 配置 Docker 容器日志轮转，避免磁盘被日志占满
+- [x] 配置 `firewalld`，仅开放 SSH 和 HTTP 80
+- [x] 不向公网开放 MySQL、Redis 和 MinIO 内部管理端口
+- [x] 创建项目部署目录和备份目录
+- [x] 配置服务器时间同步、磁盘空间告警和基础资源检查
 
 ### 验收标准
 
@@ -158,12 +168,12 @@ Docker Compose 可用
 - [x] 启动 MySQL、Redis、MinIO、API、Worker 和 Web
 - [x] 检查容器状态和启动日志，六个服务均为 `healthy`
 - [x] 检查 `/healthz`，API 返回 `200 OK`
-- [ ] 检查 `/readyz`
-- [ ] 检查 `/api/v1/version`
-- [ ] 检查 Web 页面、`/healthz` 和 `/api/` 通过公网 IP 入口返回预期结果
-- [ ] 验证注册、登录、刷新会话和退出登录
-- [ ] 验证服务重启后数据库、Redis 和对象存储数据仍然存在
-- [ ] 将本地新增的商品 API 版本重新部署到远端
+- [x] 检查 `/readyz`
+- [x] 检查 `/api/v1/version`
+- [x] 检查 Web 页面、`/healthz` 和 `/api/` 通过公网 IP 入口返回预期结果
+- [x] 验证注册、登录、刷新会话和退出登录
+- [x] 验证服务重启后数据库、Redis 和对象存储数据仍然存在
+- [x] 将本地新增的商品 API 版本重新部署到远端
 
 ### 重要说明
 
@@ -242,6 +252,7 @@ Docker Compose 可用
 - [ ] RAG 知识库和检索流程
 - [ ] Prompt 优化与结构化参数展示
 - [ ] 用户确认优化结果
+- [x] 创建生成任务 HTTP 接口（`POST /api/v1/generation-jobs`）
 - [ ] Redis Streams 任务入队
 - [ ] Python AI Worker 业务执行闭环（消息校验入口已完成）
 - [x] Mock Provider 及契约测试
@@ -273,11 +284,10 @@ Docker Compose 可用
 
 ## 九、建议执行顺序
 
-1. 补齐阶段 2 未确认的 CentOS Docker、安全与运维基线
-2. 重新部署当前版本并完成阶段 4 剩余健康检查
-3. 完成阶段 5 的公网 IP、防火墙和 Cookie 验收
-4. 阶段 6 按“3D 展示 → 收藏与个人中心 → 交易 → AI → 管理”完成剩余 P0
-5. 阶段 7 执行发布验收、备份和内测
+1. 阶段 2 运行环境、阶段 4 健康检查和阶段 5 公网 IP 入口已完成
+2. 将含 GLB 查看器的当前版本重新部署到公网
+3. 阶段 6 按“AI 生成最小 HTTP 闭环 → 收藏与个人中心 → 交易 → 管理”完成剩余 P0
+4. 阶段 7 执行发布验收、备份和内测
 
 ## 十、远程操作安全约定
 

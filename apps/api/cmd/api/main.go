@@ -12,6 +12,7 @@ import (
 	"aigc-3d-platform/apps/api/internal/asset"
 	"aigc-3d-platform/apps/api/internal/auth"
 	"aigc-3d-platform/apps/api/internal/catalog"
+	"aigc-3d-platform/apps/api/internal/generation"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/minio/minio-go/v7"
@@ -94,11 +95,16 @@ func main() {
 		logger.Error("catalog initialization failed", "error", err)
 		os.Exit(1)
 	}
+	generationHandler, err := generation.New(db, assetService, rdb, durationEnv("GENERATION_JOB_TIMEOUT", 2*time.Minute))
+	if err != nil {
+		logger.Error("generation initialization failed", "error", err)
+		os.Exit(1)
+	}
 	r := gin.New()
 	r.Use(gin.Recovery(), cors.New(cors.Config{
 		AllowOrigins:     []string{env("CORS_ALLOW_ORIGIN", "http://localhost:5173")},
 		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-Request-ID"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-Request-ID", "Idempotency-Key"},
 		ExposeHeaders:    []string{"X-Request-ID"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
@@ -111,6 +117,7 @@ func main() {
 	})
 	authHandler.RegisterRoutes(api)
 	catalogHandler.RegisterRoutes(api, authHandler.Authenticate(), authHandler.ResolveUser)
+	generationHandler.RegisterRoutes(api, authHandler.Authenticate())
 	logger.Info("api started", "port", port)
 	if err := r.Run(":" + port); err != nil {
 		logger.Error("api stopped", "error", err)

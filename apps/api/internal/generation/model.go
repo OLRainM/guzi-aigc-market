@@ -50,6 +50,7 @@ type GenerationOutput struct {
 	SizeBytes  int64           `gorm:"not null;default:0" json:"size_bytes"`
 	SHA256     string          `gorm:"type:char(64);not null" json:"sha256"`
 	Metadata   json.RawMessage `gorm:"type:json" json:"metadata,omitempty"`
+	ContentURL string          `gorm:"-" json:"content_url,omitempty"`
 	CreatedAt  time.Time       `json:"created_at"`
 }
 
