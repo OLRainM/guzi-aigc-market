@@ -65,6 +65,8 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: ${MINIO_BUCKET}
+      WORKER_INTERNAL_TOKEN: ${WORKER_INTERNAL_TOKEN}
+      GENERATION_JOB_TIMEOUT: ${GENERATION_JOB_TIMEOUT:-2m}
     expose:
       - "8080"
     depends_on:
@@ -85,10 +87,13 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_STREAM: ${REDIS_STREAM}
       REDIS_CONSUMER_GROUP: ${REDIS_CONSUMER_GROUP}
+      API_INTERNAL_URL: http://api:8080
+      WORKER_INTERNAL_TOKEN: ${WORKER_INTERNAL_TOKEN}
     expose:
       - "8000"
     depends_on:
       redis: { condition: service_healthy }
+      api: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
       interval: 5s

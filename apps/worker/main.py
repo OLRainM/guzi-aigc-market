@@ -7,6 +7,8 @@ import redis.asyncio as redis
 
 from contracts import ContractError, GenerationJobMessage
 from fastapi import FastAPI, Response, status
+from processor import HTTPAPIClient, JobProcessor
+from providers.mock import MockProvider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("ai-worker")
@@ -14,7 +16,11 @@ REDIS_ADDR = os.getenv("REDIS_ADDR", "localhost:6379")
 STREAM = os.getenv("REDIS_STREAM", "generation_jobs")
 GROUP = os.getenv("REDIS_CONSUMER_GROUP", "ai-workers")
 CONSUMER = os.getenv("HOSTNAME", "worker-1")
+API_INTERNAL_URL = os.getenv("API_INTERNAL_URL", "http://localhost:8080")
+WORKER_INTERNAL_TOKEN = os.getenv("WORKER_INTERNAL_TOKEN", "")
 client = redis.from_url(f"redis://{REDIS_ADDR}", decode_responses=True)
+api_client = HTTPAPIClient(API_INTERNAL_URL, WORKER_INTERNAL_TOKEN)
+processor = JobProcessor(api_client, MockProvider())
 stop_event = asyncio.Event()
 
 async def ensure_group() -> None:
@@ -32,13 +38,15 @@ async def consume() -> None:
             for message_id, fields in entries:
                 try:
                     message = GenerationJobMessage.from_stream(fields)
+                    result = await processor.process(message)
                     logger.info(
-                        "validated stream message",
-                        extra={"message_id": message_id, "job_id": str(message.job_id), "request_id": message.request_id},
+                        "processed stream message",
+                        extra={"message_id": message_id, "job_id": str(message.job_id), "result": result},
                     )
                     await client.xack(STREAM, GROUP, message_id)
                 except ContractError:
                     logger.exception("rejected invalid stream message", extra={"message_id": message_id})
+                    await client.xack(STREAM, GROUP, message_id)
                 except Exception:
                     logger.exception("failed to process stream message", extra={"message_id": message_id})
         await asyncio.sleep(0)
@@ -49,9 +57,10 @@ async def lifespan(_: FastAPI):
     yield
     stop_event.set()
     await task
+    await api_client.aclose()
     await client.aclose()
 
-app = FastAPI(title="AIGC AI Worker", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="AIGC AI Worker", version="0.2.0", lifespan=lifespan)
 
 @app.get("/healthz")
 async def healthz():

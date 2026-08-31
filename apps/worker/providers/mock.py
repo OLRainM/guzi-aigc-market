@@ -46,13 +46,15 @@ class MockProvider(GenerationProvider):
                 "provider output is not ready",
                 retryable=status in {ProviderStatus.PENDING, ProviderStatus.RUNNING},
             )
+        glb = minimal_glb()
         return [
             ProviderOutput(
                 output_type="MODEL",
                 format="glb",
                 uri="mock://assets/sample.glb",
                 mime_type="model/gltf-binary",
-                metadata={"provider": "mock"},
+                metadata={"provider": "mock", "size_bytes": len(glb)},
+                content=glb,
             )
         ]
 
@@ -65,3 +67,23 @@ class MockProvider(GenerationProvider):
                 "unknown provider job",
                 retryable=False,
             ) from exc
+
+
+def minimal_glb() -> bytes:
+    json_chunk = (
+        b'{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],'
+        b'"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],'
+        b'"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","max":[1.0,1.0,0.0],"min":[0.0,0.0,0.0]}],'
+        b'"bufferViews":[{"buffer":0,"byteLength":36}],"buffers":[{"byteLength":36}]}'
+    )
+    json_chunk += b" " * ((4 - len(json_chunk) % 4) % 4)
+    bin_chunk = (
+        b"\x00\x00\x00\x00\x00\x00\x80\x3f\x00\x00\x00\x00"
+        b"\x00\x00\x80\x3f\x00\x00\x00\x00\x00\x00\x00\x00"
+        b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    )
+    json_part = len(json_chunk).to_bytes(4, "little") + b"JSON" + json_chunk
+    bin_part = len(bin_chunk).to_bytes(4, "little") + b"BIN\x00" + bin_chunk
+    body = json_part + bin_part
+    header = b"glTF" + (2).to_bytes(4, "little") + (12 + len(body)).to_bytes(4, "little")
+    return header + body

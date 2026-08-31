@@ -54,6 +54,7 @@ class ProviderOutput:
     uri: str
     mime_type: str
     metadata: Mapping[str, Any]
+    content: bytes | None = None
 
 
 class GenerationProvider(ABC):

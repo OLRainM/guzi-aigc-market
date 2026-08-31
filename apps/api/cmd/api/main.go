@@ -119,6 +119,7 @@ func main() {
 	catalogHandler.RegisterRoutes(api, authHandler.Authenticate(), authHandler.ResolveUser)
 	generationHandler.RegisterRoutes(api, authHandler.Authenticate())
 	generationHandler.StartDispatcher()
+	generationHandler.StartTimeoutWatcher()
 	logger.Info("api started", "port", port)
 	if err := r.Run(":" + port); err != nil {
 		logger.Error("api stopped", "error", err)
