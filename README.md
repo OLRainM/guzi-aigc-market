@@ -11,7 +11,7 @@ docker compose up --build
 
 启动后可访问：
 
-- Web：`http://localhost:5173`（可注册、登录、发布商品、上传图片/GLB，并在工作台提交 AI 生成任务）
+- Web：`http://localhost:5173`（可注册、登录、发布商品、收藏、个人中心、交易沙盒，并在工作台提交 AI 生成任务）
 - 同源 API 健康检查：`http://localhost:5173/healthz`、`http://localhost:5173/readyz`
 - MinIO 控制台：`http://localhost:9001`（仅本机访问）
 

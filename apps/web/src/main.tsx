@@ -2,6 +2,7 @@ import { StrictMode, Suspense, createContext, lazy, useContext, useEffect, useSt
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiBase, assetSrc, generationStatusLabel, newIdempotencyKey, priceLabel, request, refreshSession, setAccessToken, statusLabel, type AuthPayload, type GenerationJob, type GenerationJobList, type Product, type ProductList, type User } from './api';
+import { AccountCenter, FavoritesPage, ProductActions, SandboxPage } from './accountPages';
 import './styles.css';
 
 const ModelViewer = lazy(() => import('./ModelViewer').then(module => ({ default: module.ModelViewer })));
@@ -21,7 +22,7 @@ function AuthProvider({ children }: { children: ReactNode }) {
 }
 function useAuth() { const value = useContext(AuthContext); if (!value) throw new Error('AuthProvider missing'); return value; }
 
-function Home() { const [status, setStatus] = useState('检查中'); useEffect(() => { fetch(`${apiBase}/healthz`).then(r => setStatus(r.ok ? 'API 正常' : 'API 异常')).catch(() => setStatus('API 未连接')); }, []); return <main><p className="eyebrow">AIGC 3D PLATFORM</p><h1>谷子交易与 3D 展示平台</h1><p className="lead">账户、商品、图片/GLB 上传、网页 3D 预览和 AI 生成任务已接入。登录后可在工作台提交提示词并轮询生成结果。</p><div className="status">{status}</div></main>; }
+function Home() { const [status, setStatus] = useState('检查中'); useEffect(() => { fetch(`${apiBase}/healthz`).then(r => setStatus(r.ok ? 'API 正常' : 'API 异常')).catch(() => setStatus('API 未连接')); }, []); return <main><p className="eyebrow">AIGC 3D PLATFORM</p><h1>谷子交易与 3D 展示平台</h1><p className="lead">账户、商品、收藏、个人中心、交易沙盒、网页 3D 预览和 AI 生成任务已接入。登录后可收藏商品、管理资料，并用虚拟资金做模拟买卖。</p><div className="status">{status}</div></main>; }
 function GenerationWorkspace() {
   const [prompt, setPrompt] = useState('a collectible figure');
   const [productType, setProductType] = useState('手办');
@@ -75,7 +76,7 @@ function GenerationWorkspace() {
     <main className="wide">
       <p className="eyebrow">WORKSPACE</p>
       <h1>AI 工作台</h1>
-      <p className="lead">提交提示词后会创建生成任务，页面每 2 秒轮询状态。Mock Provider 成功后可直接预览 GLB。</p>
+      <p className="lead">提交提示词后会创建生成任务，页面每 2 秒轮询状态，完成后可预览 GLB。</p>
       <form className="auth-card publish-form" onSubmit={create}>
         <label>提示词<textarea value={prompt} onChange={e => setPrompt(e.target.value)} maxLength={2000} required /></label>
         <label>商品类型<input value={productType} onChange={e => setProductType(e.target.value)} maxLength={64} required /></label>
@@ -140,6 +141,7 @@ function ProductDetail() {
         <div className="gallery">{product.images.map(image => <img key={image.id} src={assetSrc(image)} alt={image.original_name} />)}</div>
       )}
       <p className="lead">{product.description}</p>
+      <ProductActions productId={product.id} title={product.title} />
     </main>
   );
 }
@@ -192,8 +194,13 @@ function AuthPage() {
   return <main className="auth-shell"><section className="auth-card"><p className="eyebrow">ACCOUNT</p><h1>{mode === 'login' ? '欢迎回来' : '创建账户'}</h1><p className="muted">{mode === 'login' ? '使用用户名或邮箱登录' : '一个账户可同时购买、发布和创建模型'}</p><form onSubmit={submit}>{mode === 'login' ? <label>用户名或邮箱<input value={identifier} onChange={e => setIdentifier(e.target.value)} required autoComplete="username" /></label> : <><label>用户名<input value={username} onChange={e => setUsername(e.target.value)} minLength={3} maxLength={32} required autoComplete="username" /></label><label>邮箱（可选）<input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="email" /></label></>}<label>密码<input value={password} onChange={e => setPassword(e.target.value)} type="password" minLength={8} required autoComplete={mode === 'login' ? 'current-password' : 'new-password'} /></label>{error && <p className="error" role="alert">{error}</p>}<button disabled={submitting}>{submitting ? '处理中…' : mode === 'login' ? '登录' : '注册并登录'}</button></form><button className="text-button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}>{mode === 'login' ? '没有账户？立即注册' : '已有账户？返回登录'}</button></section></main>;
 }
 function Protected({ children }: { children: ReactNode }) { const auth = useAuth(); const location = useLocation(); if (auth.loading) return <main><p className="lead">正在恢复登录状态…</p></main>; return auth.user ? children : <Navigate to="/login" state={{ from: location.pathname }} replace />; }
-function Profile() { const auth = useAuth(); const roles = auth.user?.roles.map(role => role.name).join('、'); return <main className="wide"><p className="eyebrow">PROFILE</p><h1>{auth.user?.username}</h1><p className="lead">{auth.user?.email || '未填写邮箱'}</p><div className="profile-row"><span>账户状态</span><strong>{auth.user?.status}</strong></div><div className="profile-row"><span>角色</span><strong>{roles}</strong></div><MyListings /><button className="secondary" onClick={() => void auth.logout()}>退出登录</button></main>; }
-function Navigation() { const auth = useAuth(); return <nav><div className="nav-links"><Link to="/">首页</Link><Link to="/market">商品市场</Link><Link to="/sell">发布商品</Link><Link to="/workspace/generation">AI 工作台</Link><Link to="/me">个人中心</Link></div><Link className="account-link" to={auth.user ? '/me' : '/login'}>{auth.user?.username ?? '登录 / 注册'}</Link></nav>; }
+function Profile() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const logout = async () => { await auth.logout(); navigate('/login', { replace: true }); };
+  return <><AccountCenter onLogout={logout} /><div className="wide-wrap"><MyListings /></div></>;
+}
+function Navigation() { const auth = useAuth(); return <nav><div className="nav-links"><Link to="/">首页</Link><Link to="/market">商品市场</Link><Link to="/sell">发布商品</Link><Link to="/favorites">收藏</Link><Link to="/sandbox">交易沙盒</Link><Link to="/workspace/generation">AI 工作台</Link><Link to="/me">个人中心</Link></div><Link className="account-link" to={auth.user ? '/me' : '/login'}>{auth.user?.username ?? '登录 / 注册'}</Link></nav>; }
 function Footer() { return <footer>AIGC 3D Platform</footer>; }
-function App() { return <AuthProvider><Navigation/><Routes><Route path="/" element={<Home/>}/><Route path="/login" element={<AuthPage/>}/><Route path="/market" element={<Market/>}/><Route path="/sell" element={<Protected><Publish/></Protected>}/><Route path="/products/:id" element={<ProductDetail/>}/><Route path="/workspace/generation" element={<Protected><GenerationWorkspace/></Protected>}/><Route path="/me" element={<Protected><Profile/></Protected>}/></Routes><Footer/></AuthProvider>; }
+function App() { return <AuthProvider><Navigation/><Routes><Route path="/" element={<Home/>}/><Route path="/login" element={<AuthPage/>}/><Route path="/market" element={<Market/>}/><Route path="/sell" element={<Protected><Publish/></Protected>}/><Route path="/products/:id" element={<ProductDetail/>}/><Route path="/workspace/generation" element={<Protected><GenerationWorkspace/></Protected>}/><Route path="/favorites" element={<Protected><FavoritesPage/></Protected>}/><Route path="/sandbox" element={<Protected><SandboxPage/></Protected>}/><Route path="/me" element={<Protected><Profile/></Protected>}/></Routes><Footer/></AuthProvider>; }
 createRoot(document.getElementById('root')!).render(<StrictMode><BrowserRouter><App/></BrowserRouter></StrictMode>);

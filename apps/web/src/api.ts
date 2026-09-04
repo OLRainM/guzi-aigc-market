@@ -19,6 +19,57 @@ export type GenerationJob = {
   created_at: string; updated_at: string;
 };
 export type GenerationJobList = { items: GenerationJob[]; page: number; page_size: number; total: number };
+export type Favorite = {
+  id: string; product_id: string; folder: string; note?: string;
+  snapshot_title: string; snapshot_price_cents: number; snapshot_status: string;
+  snapshot_category: string; snapshot_ip_name: string; status: string; status_label: string;
+  current_title?: string; current_price_cents?: number; current_status?: string;
+  cover_url?: string; available: boolean; created_at: string;
+};
+export type FavoriteList = { items: Favorite[]; page: number; page_size: number; total: number };
+export type FavoriteFolder = { folder: string; count: number };
+export type Profile = { user_id: string; display_name: string; bio?: string; phone?: string };
+export type Address = {
+  id: string; recipient: string; phone: string; province: string; city: string;
+  district?: string; detail: string; postal_code?: string; is_default: boolean;
+};
+export type Preferences = {
+  notify_favorite_updates: boolean; notify_trade_events: boolean; notify_system: boolean;
+  default_favorite_folder: string; locale: string;
+};
+export type NotificationItem = { id: string; kind: string; title: string; body: string; link?: string; read_at?: string | null; created_at: string };
+export type ActivityItem = { id: string; action: string; target_type?: string; target_id?: string; detail?: string; created_at: string };
+export type ProfilePayload = {
+  user: User; profile: Profile; preferences: Preferences;
+  sandbox: { cash_cents: number; generation: number; reset_count: number };
+  stats: { favorites: number; unread_notifications: number; addresses: number };
+};
+export type SandboxHolding = {
+  id: string; product_id: string; quantity: number; avg_cost_cents: number; title: string;
+  current_price_cents: number; market_value_cents: number; unrealized_cents: number;
+  cover_url?: string; available: boolean;
+};
+export type SandboxOrder = {
+  id: string; product_id: string; product_title: string; side: string; quantity: number;
+  price_cents: number; amount_cents: number; status: string; reject_reason?: string;
+  generation: number; created_at: string;
+};
+export type SandboxSnapshot = {
+  account: { cash_cents: number; generation: number; reset_count: number };
+  holdings: SandboxHolding[]; orders: SandboxOrder[];
+  risk_notice: string; starting_cash_cents: number;
+};
+
+export function favoriteStatusLabel(status: string) {
+  return ({ ACTIVE: '有效', UPDATED: '已更新', UNAVAILABLE: '不可购买', INVALID: '已失效' } as Record<string, string>)[status] ?? status;
+}
+
+export function activityLabel(action: string) {
+  return ({
+    VIEW_PRODUCT: '浏览商品', FAVORITE_ADD: '加入收藏', FAVORITE_REMOVE: '取消收藏',
+    PROFILE_UPDATE: '更新资料', ADDRESS_SAVE: '保存地址', SANDBOX_TRADE: '沙盒交易', SANDBOX_RESET: '重置沙盒',
+  } as Record<string, string>)[action] ?? action;
+}
 
 export function newIdempotencyKey() {
   return crypto.randomUUID();
