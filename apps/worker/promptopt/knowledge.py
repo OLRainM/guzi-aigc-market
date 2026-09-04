@@ -20,44 +20,54 @@ class TermDocument:
     knowledge_version: str
 
 
+def _safe_parent(path: Path, index: int) -> Path | None:
+    if len(path.parents) <= index:
+        return None
+    return path.parents[index]
+
+
+def _existing_path(*candidates: Path | None) -> Path:
+    valid: list[Path] = []
+    for path in candidates:
+        if path is None or not str(path).strip():
+            continue
+        valid.append(path)
+        if path.is_file():
+            return path
+    if not valid:
+        raise FileNotFoundError("no RAG path candidates configured")
+    return valid[0]
+
+
 def default_terms_path() -> Path:
     here = Path(__file__).resolve()
-    candidates = [
+    repo_root = _safe_parent(here, 3)
+    return _existing_path(
         Path(os.getenv("RAG_TERMS_PATH", "")),
-        here.parents[3] / "rag" / "terminology" / "data" / "terms.jsonl",
         Path("/app/rag/terminology/data/terms.jsonl"),
+        (repo_root / "rag" / "terminology" / "data" / "terms.jsonl") if repo_root else None,
         here.parents[1] / "rag" / "terminology" / "data" / "terms.jsonl",
-    ]
-    for path in candidates:
-        if str(path) and path.is_file():
-            return path
-    return candidates[1]
+    )
 
 
 def default_rules_path() -> Path:
     here = Path(__file__).resolve()
-    candidates = [
+    repo_root = _safe_parent(here, 3)
+    return _existing_path(
         Path(os.getenv("RAG_RULES_PATH", "")),
-        here.parents[3] / "rag" / "terminology" / "rules" / "compatibility.json",
         Path("/app/rag/terminology/rules/compatibility.json"),
-    ]
-    for path in candidates:
-        if str(path) and path.is_file():
-            return path
-    return candidates[1]
+        (repo_root / "rag" / "terminology" / "rules" / "compatibility.json") if repo_root else None,
+    )
 
 
 def default_system_prompt_path() -> Path:
     here = Path(__file__).resolve()
-    candidates = [
+    repo_root = _safe_parent(here, 3)
+    return _existing_path(
         Path(os.getenv("RAG_SYSTEM_PROMPT_PATH", "")),
-        here.parents[3] / "rag" / "terminology" / "prompts" / "optimizer-system.zh-CN.md",
         Path("/app/rag/terminology/prompts/optimizer-system.zh-CN.md"),
-    ]
-    for path in candidates:
-        if str(path) and path.is_file():
-            return path
-    return candidates[1]
+        (repo_root / "rag" / "terminology" / "prompts" / "optimizer-system.zh-CN.md") if repo_root else None,
+    )
 
 
 class TerminologyIndex:

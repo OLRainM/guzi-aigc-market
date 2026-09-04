@@ -2,12 +2,19 @@ import json
 import unittest
 from pathlib import Path
 
-from promptopt.knowledge import TerminologyIndex
+from promptopt.knowledge import TerminologyIndex, default_terms_path
 from promptopt.optimizer import PromptOptimizer
 
 ROOT = Path(__file__).resolve().parents[3]
 TERMS = ROOT / "rag" / "terminology" / "data" / "terms.jsonl"
 RULES = ROOT / "rag" / "terminology" / "rules" / "compatibility.json"
+
+
+class KnowledgePathTests(unittest.TestCase):
+    def test_default_terms_path_skips_missing_parents(self) -> None:
+        path = default_terms_path()
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.name, "terms.jsonl")
 
 
 class PromptOptimizerTests(unittest.IsolatedAsyncioTestCase):
