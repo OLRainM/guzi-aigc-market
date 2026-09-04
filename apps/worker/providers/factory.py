@@ -14,4 +14,8 @@ def create_provider(name: str | None = None) -> GenerationProvider:
         from providers.http import HTTPProvider
 
         return HTTPProvider()
+    if provider in {"hy3d", "hy-3d", "tokenhub"}:
+        from providers.hy3d import Hy3DProvider
+
+        return Hy3DProvider()
     raise ValueError(f"unsupported GENERATION_PROVIDER: {provider}")

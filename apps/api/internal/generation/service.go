@@ -96,7 +96,7 @@ func (s *Service) Create(ctx context.Context, userID, idempotencyKey, requestID 
 		Progress:       0,
 		RawPrompt:      strings.TrimSpace(req.Prompt),
 		RequestPayload: payload,
-		Provider:       "mock",
+		Provider:       normalizeProvider(req.Provider),
 		Attempt:        1,
 		MaxAttempts:    3,
 		Version:        1,
@@ -177,8 +177,8 @@ func (s *Service) ToResponse(job GenerationJob, outputs []GenerationOutput) JobR
 	}
 	return JobResponse{
 		ID: job.ID, SourceJobID: job.SourceJobID, Status: job.Status, Stage: job.Stage, Progress: job.Progress,
-		RawPrompt: job.RawPrompt, OptimizedPrompt: job.OptimizedPrompt, Provider: job.Provider,
-		Attempt: job.Attempt, MaxAttempts: job.MaxAttempts, Outputs: outputs, Error: jobErr,
+		RawPrompt: job.RawPrompt, OptimizedPrompt: job.OptimizedPrompt, ProductType: productTypeFromPayload(job.RequestPayload),
+		Provider: job.Provider, Attempt: job.Attempt, MaxAttempts: job.MaxAttempts, Outputs: outputs, Error: jobErr,
 		CreatedAt: job.CreatedAt, StartedAt: job.StartedAt, FinishedAt: job.FinishedAt, UpdatedAt: job.UpdatedAt,
 	}
 }
@@ -192,7 +192,7 @@ func validateCreateRequest(req CreateJobRequest) error {
 	if productType == "" || utf8.RuneCountInString(productType) > 64 {
 		return errInvalidArgument
 	}
-	if req.Provider != "mock" {
+	if !allowedProvider(req.Provider) {
 		return errInvalidArgument
 	}
 	if !req.CopyrightConfirmed {
@@ -215,4 +215,37 @@ func hashRequest(req CreateJobRequest) (string, json.RawMessage, error) {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), raw, nil
+}
+
+func allowedProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "", "mock", "http", "hy3d", "hy-3d", "tokenhub":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "hy3d", "hy-3d", "tokenhub":
+		return "hy3d"
+	case "http", "external", "manual":
+		return "http"
+	default:
+		return "mock"
+	}
+}
+
+func productTypeFromPayload(payload json.RawMessage) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	var body struct {
+		ProductType string `json:"product_type"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(body.ProductType)
 }

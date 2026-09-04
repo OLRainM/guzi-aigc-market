@@ -1,7 +1,7 @@
 import { StrictMode, Suspense, createContext, lazy, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { apiBase, assetSrc, generationStatusLabel, newIdempotencyKey, priceLabel, request, refreshSession, setAccessToken, statusLabel, type AuthPayload, type GenerationJob, type GenerationJobList, type Product, type ProductList, type User } from './api';
+import { apiBase, assetSrc, generationStageLabel, generationStatusLabel, newIdempotencyKey, priceLabel, request, refreshSession, setAccessToken, statusLabel, type AuthPayload, type GenerationJob, type GenerationJobList, type Product, type ProductList, type User } from './api';
 import { AccountCenter, FavoritesPage, ProductActions, SandboxPage } from './accountPages';
 import './styles.css';
 
@@ -58,7 +58,7 @@ function GenerationWorkspace() {
       const body = await request<{ job: GenerationJob }>('/api/v1/generation-jobs', {
         method: 'POST',
         headers: { 'Idempotency-Key': newIdempotencyKey() },
-        body: JSON.stringify({ prompt, product_type: productType, provider: 'mock', copyright_confirmed: true }),
+        body: JSON.stringify({ prompt, product_type: productType, provider: 'hy3d', copyright_confirmed: true }),
       });
       mergeJob(body.job);
       setActiveId(body.job.id);
@@ -76,7 +76,7 @@ function GenerationWorkspace() {
     <main className="wide">
       <p className="eyebrow">WORKSPACE</p>
       <h1>AI 工作台</h1>
-      <p className="lead">提交提示词后会创建生成任务，页面每 2 秒轮询状态，完成后可预览 GLB。</p>
+      <p className="lead">提交提示词后会先用术语库和 LLM 优化，再交给混元 HY-3D 生成静态 GLB。页面每 2 秒轮询状态。</p>
       <form className="auth-card publish-form" onSubmit={create}>
         <label>提示词<textarea value={prompt} onChange={e => setPrompt(e.target.value)} maxLength={2000} required /></label>
         <label>商品类型<input value={productType} onChange={e => setProductType(e.target.value)} maxLength={64} required /></label>
@@ -96,8 +96,9 @@ function GenerationWorkspace() {
         </div>
         {active && (
           <div className="auth-card publish-form">
-            <p className="muted">{generationStatusLabel(active.status)} · {active.stage} · 第 {active.attempt}/{active.max_attempts} 次</p>
+            <p className="muted">{generationStatusLabel(active.status)} · {generationStageLabel(active.stage)} · 第 {active.attempt}/{active.max_attempts} 次</p>
             <div className="viewer-progress" role="status"><span>{active.progress}%</span><i style={{ width: `${active.progress}%` }} /></div>
+            {active.optimized_prompt && <p className="muted">优化后 Prompt：{active.optimized_prompt}</p>}
             {active.error && <p className="error" role="alert">{active.error.message}</p>}
             <div className="viewer-actions">
               {(active.status === 'QUEUED' || active.status === 'RUNNING') && <button className="secondary" onClick={() => void act('cancel')}>取消</button>}

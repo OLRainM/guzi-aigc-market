@@ -17,7 +17,7 @@ docker compose up --build
 
 服务器部署时在 `.env` 中设置 `WEB_PORT=80`，并在防火墙中开放 TCP 80，即可通过 `http://<服务器公网IP>` 直接访问。前端通过同一 IP 下的 `/api/` 调用 API，无需域名、DNS、TLS 证书或额外跨域配置；MySQL、Redis、MinIO、API 和 Worker 端口应仅绑定 `127.0.0.1` 或保持在 Compose 内部网络。
 
-AI 生成默认走 Mock Provider。接入真实 3D 服务时，在 `.env` 设置 `GENERATION_PROVIDER=http`、`PROVIDER_BASE_URL` 和 `PROVIDER_API_KEY`，HTTP 契约见 `apps/worker/PROVIDER.md`。
+AI 生成默认走 Mock Provider。第一期真实链路为：术语库 RAG + LLM 优化用户 Prompt，再调用腾讯云 TokenHub 混元 HY-3D 文生静态 GLB。在 `.env` 设置 `GENERATION_PROVIDER=hy3d`、`TOKENHUB_API_KEY`、`LLM_BASE_URL` 和 `LLM_API_KEY`，说明见 `apps/worker/PROVIDER.md`。
 
 开发环境默认凭据仅用于本地联调，部署前必须通过环境变量替换。MySQL、Redis 和 MinIO 使用 Docker 数据卷持久化，`docker compose down` 不会删除数据；不要在保留数据时使用 `docker compose down -v`。
 

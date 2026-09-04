@@ -122,6 +122,35 @@ func TestGetGenerationJob(t *testing.T) {
 	}
 }
 
+func TestWorkerProgressStoresOptimizedPrompt(t *testing.T) {
+	_, router, workerToken := setupWorkerRouter(t)
+	token := registerUser(t, router, "creator")
+	jobID := createJobWithToken(t, router, token)
+	claim := httptest.NewRecorder()
+	router.ServeHTTP(claim, workerJSON(http.MethodPost, "/api/v1/internal/generation-jobs/"+jobID+"/claim", workerToken, map[string]any{"attempt": 1}))
+	if claim.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body = %s", claim.Code, claim.Body.String())
+	}
+	progress := httptest.NewRecorder()
+	router.ServeHTTP(progress, workerJSON(http.MethodPost, "/api/v1/internal/generation-jobs/"+jobID+"/progress", workerToken, map[string]any{
+		"attempt": 1, "stage": string(StageOptimizingPrompt), "progress": 25,
+		"optimized_prompt": "棉花娃，软填充布料分片，干净拓扑，适合导出 GLB。",
+		"rag_version":      "1.0.0",
+		"template_version": "text-to-3d-template.zh-CN@1.0.0",
+		"rag_context":      map[string]any{"mode": "rag_fallback", "terms": []string{"棉花娃"}},
+	}))
+	if progress.Code != http.StatusOK {
+		t.Fatalf("progress status = %d body = %s", progress.Code, progress.Body.String())
+	}
+	job := jobJSON(t, progress)
+	if job["optimized_prompt"] != "棉花娃，软填充布料分片，干净拓扑，适合导出 GLB。" {
+		t.Fatalf("optimized_prompt = %#v", job["optimized_prompt"])
+	}
+	if job["stage"] != string(StageOptimizingPrompt) {
+		t.Fatalf("stage = %#v", job["stage"])
+	}
+}
+
 func TestGetGenerationJobHidesOtherUsers(t *testing.T) {
 	_, router, _ := setupWorkerRouter(t)
 	owner := registerUser(t, router, "owner")

@@ -66,7 +66,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: ${MINIO_BUCKET}
       WORKER_INTERNAL_TOKEN: ${WORKER_INTERNAL_TOKEN}
-      GENERATION_JOB_TIMEOUT: ${GENERATION_JOB_TIMEOUT:-2m}
+      GENERATION_JOB_TIMEOUT: ${GENERATION_JOB_TIMEOUT:-15m}
     expose:
       - "8080"
     depends_on:
@@ -80,7 +80,9 @@ services:
       retries: 20
 
   worker:
-    build: ./apps/worker
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
     environment:
       APP_ENV: ${APP_ENV}
       WORKER_PORT: 8000
@@ -93,8 +95,18 @@ services:
       PROVIDER_BASE_URL: ${PROVIDER_BASE_URL:-}
       PROVIDER_API_KEY: ${PROVIDER_API_KEY:-}
       PROVIDER_TIMEOUT: ${PROVIDER_TIMEOUT:-60}
-      PROVIDER_POLL_INTERVAL: ${PROVIDER_POLL_INTERVAL:-2}
-      PROVIDER_POLL_TIMEOUT: ${PROVIDER_POLL_TIMEOUT:-180}
+      PROVIDER_POLL_INTERVAL: ${PROVIDER_POLL_INTERVAL:-8}
+      PROVIDER_POLL_TIMEOUT: ${PROVIDER_POLL_TIMEOUT:-900}
+      TOKENHUB_API_KEY: ${TOKENHUB_API_KEY:-}
+      HY3D_BASE_URL: ${HY3D_BASE_URL:-https://tokenhub.tencentmaas.com}
+      HY3D_MODEL: ${HY3D_MODEL:-hy-3d-3.1}
+      HY3D_ENABLE_PBR: ${HY3D_ENABLE_PBR:-true}
+      HY3D_FACE_COUNT: ${HY3D_FACE_COUNT:-100000}
+      HY3D_GENERATE_TYPE: ${HY3D_GENERATE_TYPE:-normal}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-30}
     expose:
       - "8000"
     depends_on:

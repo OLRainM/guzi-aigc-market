@@ -1,127 +1,65 @@
-# 外部 3D 模型调用接口
+# 3D 生成 Provider
 
-Worker 默认使用 `GENERATION_PROVIDER=mock`。接入真实文本生成 3D 服务时，只改环境变量，不必改业务代码。
+Worker 默认 `GENERATION_PROVIDER=mock`。第一期真实链路是：
 
-## 配置
-
-在服务器 `/opt/aigc-3d-platform/.env` 中填写：
-
-```env
-GENERATION_PROVIDER=http
-PROVIDER_BASE_URL=https://your-3d-api.example.com
-PROVIDER_API_KEY=your-token
-PROVIDER_TIMEOUT=60
-PROVIDER_POLL_INTERVAL=2
+```text
+用户文本 → 术语库检索 → LLM 优化 Prompt → TokenHub HY-3D submit/query → 下载 GLB → MinIO
 ```
 
-然后重建 Worker：
+不要把 TokenHub 官方地址填进通用 `PROVIDER_BASE_URL`。HY-3D 使用专用适配器 `GENERATION_PROVIDER=hy3d`。
+
+## 第一期配置
+
+在服务器 `/opt/aigc-3d-platform/.env` 填写：
+
+```env
+GENERATION_PROVIDER=hy3d
+TOKENHUB_API_KEY=your-tokenhub-key
+HY3D_BASE_URL=https://tokenhub.tencentmaas.com
+HY3D_MODEL=hy-3d-3.1
+HY3D_ENABLE_PBR=true
+HY3D_FACE_COUNT=100000
+HY3D_GENERATE_TYPE=normal
+PROVIDER_POLL_INTERVAL=8
+PROVIDER_POLL_TIMEOUT=900
+GENERATION_JOB_TIMEOUT=15m
+
+LLM_BASE_URL=https://your-openai-compatible-endpoint/v1
+LLM_API_KEY=your-llm-key
+LLM_MODEL=gpt-4o-mini
+LLM_TIMEOUT=30
+```
+
+然后重建：
 
 ```bash
 cd /opt/aigc-3d-platform
-docker compose up -d --build worker
+docker compose up -d --build worker web api
 ```
 
-未填写 `PROVIDER_BASE_URL` 时不要把 `GENERATION_PROVIDER` 设为 `http`，否则任务会失败。密钥只放 `.env`，不要提交到 Git。
+密钥只放 `.env`，不要入库。未配置 `TOKENHUB_API_KEY` 时不要把 `GENERATION_PROVIDER` 设为 `hy3d`。未配置 `LLM_API_KEY` / `LLM_BASE_URL` 时，Worker 仍会用术语库拼接 Prompt，不阻断生成。
 
-## 需要你实现的 HTTP 契约
+## Prompt 优化
 
-Worker 会把 `Authorization: Bearer $PROVIDER_API_KEY` 带到下列路径（均相对 `PROVIDER_BASE_URL`）。
+Worker 认领任务后、提交 HY-3D 前会：
 
-### 1. 提交任务
+1. 用 `rag/terminology/data/terms.jsonl` 做关键词检索
+2. 读取 `optimizer-system.zh-CN.md` 和兼容规则
+3. 调用 OpenAI 兼容 `POST {LLM_BASE_URL}/chat/completions`
+4. 把 `optimized_prompt`、`rag_context`、`rag_version` 回写到任务
+5. 用优化后的中文 Prompt（截断 1024 字）提交 HY-3D
 
-`POST /jobs`
+LLM 失败时回退到术语片段拼接，不把原始短句直接丢给 3D 模型。
 
-```json
-{
-  "prompt": "a collectible figure",
-  "parameters": {
-    "attempt": 1,
-    "product_type": "手办"
-  }
-}
-```
+## HY-3D 接口
 
-成功响应 `200` 或 `202`：
+相对 `HY3D_BASE_URL`：
 
-```json
-{
-  "provider_job_id": "ext-123",
-  "status": "PENDING"
-}
-```
+- 提交：`POST /v1/api/3d/submit`，`Authorization: Bearer $TOKENHUB_API_KEY`
+- 查询：`POST /v1/api/3d/query`，body `{ "model", "id" }`
+- 无官方取消接口；平台取消只停止本地轮询，上游任务可能继续占用默认并发 3
+- 成功后立刻下载 `data[].url` 中的 GLB，存到自己的 MinIO
 
-`id` 也可代替 `provider_job_id`。`status` 可为 `PENDING` / `QUEUED` / `RUNNING` / `SUCCEEDED` / `FAILED`。
+## 通用 HTTP Provider
 
-### 2. 查询状态
-
-`GET /jobs/{provider_job_id}`
-
-```json
-{
-  "status": "RUNNING",
-  "progress": 40,
-  "error": null
-}
-```
-
-失败时：
-
-```json
-{
-  "status": "FAILED",
-  "progress": 40,
-  "error": {
-    "code": "PROVIDER_TIMEOUT",
-    "message": "upstream timed out",
-    "retryable": true
-  }
-}
-```
-
-`code` 建议使用：`INVALID_REQUEST`、`AUTHENTICATION_FAILED`、`RATE_LIMITED`、`INSUFFICIENT_BALANCE`、`PROVIDER_UNAVAILABLE`、`PROVIDER_TIMEOUT`、`OUTPUT_INVALID`、`DOWNLOAD_FAILED`。
-
-### 3. 取消任务
-
-`POST /jobs/{provider_job_id}/cancel`
-
-```json
-{ "canceled": true }
-```
-
-### 4. 拉取结果
-
-`GET /jobs/{provider_job_id}/outputs`
-
-```json
-{
-  "outputs": [
-    {
-      "output_type": "MODEL",
-      "format": "glb",
-      "uri": "https://your-cdn.example.com/result.glb",
-      "mime_type": "model/gltf-binary",
-      "metadata": {}
-    }
-  ]
-}
-```
-
-Worker 会下载 `uri`/`url`。也可返回 `content_base64` 内嵌 GLB。第一个可用输出会存入平台对象存储，并在工作台预览。
-
-## 错误响应
-
-HTTP `4xx/5xx` 时返回：
-
-```json
-{
-  "code": "PROVIDER_UNAVAILABLE",
-  "message": "upstream 5xx",
-  "error": {
-    "code": "PROVIDER_UNAVAILABLE",
-    "message": "upstream 5xx",
-    "retryable": true
-  }
-}
-```
-
-`429` 和 `5xx` 会重试；`401/403` 和大部分 `4xx` 不会重试。
+`GENERATION_PROVIDER=http` 仍可用于自建 `/jobs` 契约服务，见历史接口：`POST /jobs`、`GET /jobs/{id}`、`GET /jobs/{id}/outputs`、`POST /jobs/{id}/cancel`。

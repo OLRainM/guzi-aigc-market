@@ -3,7 +3,7 @@
 - **项目**：谷子交易与 3D/AIGC 平台
 - **记录日期**：2026-08-31
 - **当前阶段**：阶段 2 CentOS 运行环境已完成；商品资产上传、公网 IP 入口、网页 GLB 3D 查看器和 AI 生成最小 HTTP 闭环已完成
-- **下一目标**：手动接入真实 3D Provider（填写 `PROVIDER_BASE_URL` / `PROVIDER_API_KEY`），或继续阶段 6 收藏与交易
+- **下一目标**：在服务器填写 `TOKENHUB_API_KEY` 与 `LLM_API_KEY`，将 `GENERATION_PROVIDER=hy3d` 后重建 worker/web；真实支付/物流仍未开始
 
 ## 当前进行中的任务
 
@@ -12,8 +12,8 @@
 - **开始时间**：2026-08-31
 - **当前进度状态**：已完成
 - **已完成进展**：创建任务、Redis Streams 入队、Worker Mock 消费、轮询状态、GLB 落盘预览，以及超时、失败、重试、取消均已打通。工作台可提交提示词并每 2 秒轮询。
-- **当前阻塞事项**：真实 3D Provider 需手动填写 `PROVIDER_BASE_URL` 后才会启用。
-- **下一步**：按 `apps/worker/PROVIDER.md` 配置外部 3D API。收藏、个人中心与交易沙盒已在仓库落地，待随下次部署上线。
+- **当前阻塞事项**：代码已支持 TokenHub HY-3D 与 RAG/LLM Prompt 优化；服务器仍需填写 `TOKENHUB_API_KEY`、`LLM_BASE_URL`/`LLM_API_KEY`，并把 `GENERATION_PROVIDER` 改为 `hy3d`。
+- **下一步**：按 `apps/worker/PROVIDER.md` 配置混元 HY-3D 与 LLM，重建 worker 与 web。收藏、个人中心与交易沙盒已在仓库落地，待随下次部署上线。
 
 ## 远端只读环境监测（2026-08-31）
 
@@ -251,14 +251,14 @@ Docker Compose 可用
 
 ### AI 建模工作台
 
-- [ ] RAG 知识库和检索流程
-- [ ] Prompt 优化与结构化参数展示
+- [x] RAG 知识库和检索流程（Worker 认领后检索 `rag/terminology`）
+- [x] Prompt 优化（LLM 优先，失败则术语库拼接；工作台展示 `optimized_prompt`）
 - [ ] 用户确认优化结果
 - [x] 创建生成任务 HTTP 接口（`POST /api/v1/generation-jobs`）
 - [x] Redis Streams 任务入队
 - [x] Python AI Worker 业务执行闭环（消息校验入口已完成）
 - [x] Mock Provider 及契约测试
-- [x] 第三方文本生成 3D Provider HTTP 适配器（手动配置 `PROVIDER_BASE_URL`，契约见 `apps/worker/PROVIDER.md`）
+- [x] 第三方文本生成 3D Provider HTTP 适配器（通用 `/jobs` 与 TokenHub HY-3D，契约见 `apps/worker/PROVIDER.md`）
 - [x] 任务轮询、超时、失败、重试和取消
 - [x] 生成结果存储为 GLB 资产
 - [ ] 从 AI 结果一键带入商品发布
@@ -287,7 +287,7 @@ Docker Compose 可用
 ## 九、建议执行顺序
 
 1. 阶段 2 运行环境、阶段 4 健康检查和阶段 5 公网 IP 入口已完成
-2. 含 AI 生成闭环的当前版本已部署到公网 `http://8.154.28.98`；真实 3D Provider 按 `apps/worker/PROVIDER.md` 手动接入
+2. 含 AI 生成闭环的当前版本已部署到公网 `http://8.154.28.98`；第一期真实链路按 `apps/worker/PROVIDER.md` 配置 HY-3D 与 LLM
 3. 阶段 6 按“收藏与个人中心 → 交易 → 管理”完成剩余 P0
 4. 阶段 7 执行发布验收、备份和内测
 

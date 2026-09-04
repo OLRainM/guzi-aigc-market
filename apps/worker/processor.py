@@ -7,6 +7,7 @@ import time
 from typing import Any, Mapping, Protocol
 
 from contracts import GenerationJobMessage
+from promptopt import PromptOptimizer
 from providers.base import GenerationProvider, ProviderError, ProviderErrorCode, ProviderStatus
 from providers.mock import MockProvider, minimal_glb
 
@@ -19,7 +20,14 @@ class JobCanceled(RuntimeError):
 
 class APIClient(Protocol):
     async def claim(self, job_id: str, attempt: int) -> dict[str, Any]: ...
-    async def progress(self, job_id: str, attempt: int, stage: str, progress: int) -> dict[str, Any]: ...
+    async def progress(
+        self,
+        job_id: str,
+        attempt: int,
+        stage: str,
+        progress: int,
+        extra: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
     async def fail(self, job_id: str, attempt: int, error_code: str, error_message: str, retryable: bool) -> dict[str, Any]: ...
     async def complete(self, job_id: str, attempt: int, provider_job_id: str, filename: str, content: bytes, mime_type: str) -> dict[str, Any]: ...
 
@@ -36,11 +44,18 @@ class HTTPAPIClient:
     async def claim(self, job_id: str, attempt: int) -> dict[str, Any]:
         return await self._post(f"/api/v1/internal/generation-jobs/{job_id}/claim", json={"attempt": attempt})
 
-    async def progress(self, job_id: str, attempt: int, stage: str, progress: int) -> dict[str, Any]:
-        return await self._post(
-            f"/api/v1/internal/generation-jobs/{job_id}/progress",
-            json={"attempt": attempt, "stage": stage, "progress": progress},
-        )
+    async def progress(
+        self,
+        job_id: str,
+        attempt: int,
+        stage: str,
+        progress: int,
+        extra: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"attempt": attempt, "stage": stage, "progress": progress}
+        if extra:
+            payload.update(dict(extra))
+        return await self._post(f"/api/v1/internal/generation-jobs/{job_id}/progress", json=payload)
 
     async def fail(self, job_id: str, attempt: int, error_code: str, error_message: str, retryable: bool) -> dict[str, Any]:
         return await self._post(
@@ -89,11 +104,17 @@ def job_status(payload: Mapping[str, Any]) -> str:
 
 
 class JobProcessor:
-    def __init__(self, api: APIClient, provider: GenerationProvider | None = None) -> None:
+    def __init__(
+        self,
+        api: APIClient,
+        provider: GenerationProvider | None = None,
+        optimizer: PromptOptimizer | None = None,
+    ) -> None:
         self.api = api
         self.provider = provider or MockProvider()
-        self.poll_interval = float(os.getenv("PROVIDER_POLL_INTERVAL", "2"))
-        self.poll_timeout = float(os.getenv("PROVIDER_POLL_TIMEOUT", "180"))
+        self.optimizer = optimizer or PromptOptimizer()
+        self.poll_interval = float(os.getenv("PROVIDER_POLL_INTERVAL", "8"))
+        self.poll_timeout = float(os.getenv("PROVIDER_POLL_TIMEOUT", "900"))
 
     async def process(self, message: GenerationJobMessage) -> str:
         job_id = str(message.job_id)
@@ -106,10 +127,29 @@ class JobProcessor:
             if status != "RUNNING":
                 raise RuntimeError(f"unexpected claim status: {status}")
             job = claimed.get("job") if isinstance(claimed.get("job"), dict) else {}
-            prompt = str(job.get("raw_prompt") or "")
-            parameters = {"attempt": attempt, "product_type": job.get("product_type") or ""}
-            await self._progress(job_id, attempt, "GENERATING", 40)
-            submission = await self.provider.submit(prompt, parameters)
+            prompt = str(job.get("raw_prompt") or "").strip()
+            product_type = str(job.get("product_type") or "")
+            parameters = {"attempt": attempt, "product_type": product_type}
+            if not prompt:
+                raise ProviderError(ProviderErrorCode.INVALID_REQUEST, "prompt is required", retryable=False)
+            await self._progress(job_id, attempt, "OPTIMIZING_PROMPT", 15)
+            optimized = await self.optimizer.optimize(prompt, product_type)
+            await self._progress(
+                job_id,
+                attempt,
+                "OPTIMIZING_PROMPT",
+                25,
+                extra={
+                    "optimized_prompt": optimized.text,
+                    "product_type": optimized.product_type,
+                    "rag_context": optimized.rag_context,
+                    "rag_version": optimized.rag_version,
+                    "template_version": optimized.template_version,
+                    "structured_prompt": optimized.structured,
+                },
+            )
+            await self._progress(job_id, attempt, "SUBMITTING_PROVIDER", 40)
+            submission = await self.provider.submit(optimized.text, parameters)
             progress = await self._wait_for_success(job_id, attempt, submission.provider_job_id)
             if progress.status != ProviderStatus.SUCCEEDED:
                 if progress.error:
@@ -166,8 +206,15 @@ class JobProcessor:
                 raise ProviderError(ProviderErrorCode.PROVIDER_TIMEOUT, "provider polling timed out", retryable=True)
             await asyncio.sleep(self.poll_interval)
 
-    async def _progress(self, job_id: str, attempt: int, stage: str, progress: int) -> None:
-        payload = await self.api.progress(job_id, attempt, stage, progress)
+    async def _progress(
+        self,
+        job_id: str,
+        attempt: int,
+        stage: str,
+        progress: int,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        payload = await self.api.progress(job_id, attempt, stage, progress, extra)
         if job_status(payload) == "CANCELED":
             raise JobCanceled()
 

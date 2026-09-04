@@ -4,7 +4,22 @@ from uuid import uuid4
 
 from contracts import GenerationJobMessage
 from processor import JobProcessor
+from promptopt.optimizer import OptimizedPrompt
 from providers.mock import MockProvider, minimal_glb
+
+
+class FakeOptimizer:
+    async def optimize(self, raw_prompt: str, product_type: str = "") -> OptimizedPrompt:
+        text = f"{raw_prompt}；干净拓扑，适合导出 GLB。"
+        return OptimizedPrompt(
+            text=text,
+            product_type=product_type or None,
+            structured={"text_to_3d_prompt": text},
+            rag_context={"mode": "test", "term_ids": []},
+            rag_version="test",
+            template_version="text-to-3d-template.zh-CN@1.0.0",
+            source="test",
+        )
 
 
 class FakeAPI:
@@ -18,10 +33,13 @@ class FakeAPI:
         self.calls.append(("claim", {"job_id": job_id, "attempt": attempt}))
         if self.status == "QUEUED":
             self.status = "RUNNING"
-        return {"job": {"id": job_id, "status": self.status, "raw_prompt": self.prompt, "attempt": attempt}}
+        return {"job": {"id": job_id, "status": self.status, "raw_prompt": self.prompt, "product_type": "figure", "attempt": attempt}}
 
-    async def progress(self, job_id: str, attempt: int, stage: str, progress: int) -> dict:
-        self.calls.append(("progress", {"job_id": job_id, "stage": stage, "progress": progress}))
+    async def progress(self, job_id: str, attempt: int, stage: str, progress: int, extra=None) -> dict:
+        payload = {"job_id": job_id, "stage": stage, "progress": progress}
+        if extra:
+            payload.update(extra)
+        self.calls.append(("progress", payload))
         return {"job": {"id": job_id, "status": self.status, "stage": stage, "progress": progress}}
 
     async def fail(self, job_id: str, attempt: int, error_code: str, error_message: str, retryable: bool) -> dict:
@@ -51,17 +69,20 @@ def sample_message() -> GenerationJobMessage:
 class JobProcessorTests(unittest.IsolatedAsyncioTestCase):
     async def test_processes_mock_job(self) -> None:
         api = FakeAPI()
-        processor = JobProcessor(api, MockProvider())
+        processor = JobProcessor(api, MockProvider(), FakeOptimizer())
         result = await processor.process(sample_message())
         self.assertEqual(result, "SUCCEEDED")
         self.assertEqual([name for name, _ in api.calls][:2], ["claim", "progress"])
+        optimize_calls = [payload for name, payload in api.calls if name == "progress" and payload["stage"] == "OPTIMIZING_PROMPT"]
+        self.assertTrue(optimize_calls)
+        self.assertIn("optimized_prompt", optimize_calls[-1])
         self.assertEqual(api.calls[-1][0], "complete")
         self.assertTrue(api.completed.startswith(b"glTF"))
         self.assertGreaterEqual(len(api.completed), len(minimal_glb()))
 
     async def test_reports_provider_failure(self) -> None:
         api = FakeAPI(prompt="   ")
-        processor = JobProcessor(api, MockProvider())
+        processor = JobProcessor(api, MockProvider(), FakeOptimizer())
         result = await processor.process(sample_message())
         self.assertEqual(result, "FAILED")
         self.assertEqual(api.calls[-1][0], "fail")

@@ -8,6 +8,7 @@ import redis.asyncio as redis
 from contracts import ContractError, GenerationJobMessage
 from fastapi import FastAPI, Response, status
 from processor import HTTPAPIClient, JobProcessor
+from promptopt import PromptOptimizer
 from providers.factory import create_provider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -21,7 +22,8 @@ WORKER_INTERNAL_TOKEN = os.getenv("WORKER_INTERNAL_TOKEN", "")
 client = redis.from_url(f"redis://{REDIS_ADDR}", decode_responses=True)
 api_client = HTTPAPIClient(API_INTERNAL_URL, WORKER_INTERNAL_TOKEN)
 provider = create_provider()
-processor = JobProcessor(api_client, provider)
+optimizer = PromptOptimizer()
+processor = JobProcessor(api_client, provider, optimizer)
 stop_event = asyncio.Event()
 
 async def ensure_group() -> None:
@@ -61,6 +63,7 @@ async def lifespan(_: FastAPI):
     close = getattr(provider, "aclose", None)
     if close:
         await close()
+    await optimizer.aclose()
     await api_client.aclose()
     await client.aclose()
 

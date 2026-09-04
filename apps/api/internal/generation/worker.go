@@ -15,9 +15,15 @@ import (
 )
 
 type WorkerProgressRequest struct {
-	Attempt  int    `json:"attempt"`
-	Stage    Stage  `json:"stage"`
-	Progress int    `json:"progress"`
+	Attempt               int             `json:"attempt"`
+	Stage                 Stage           `json:"stage"`
+	Progress              int             `json:"progress"`
+	OptimizedPrompt       *string         `json:"optimized_prompt,omitempty"`
+	ProductType           *string         `json:"product_type,omitempty"`
+	RAGContext            json.RawMessage `json:"rag_context,omitempty"`
+	RAGVersion            *string         `json:"rag_version,omitempty"`
+	PromptTemplateVersion *string         `json:"template_version,omitempty"`
+	StructuredPrompt      json.RawMessage `json:"structured_prompt,omitempty"`
 }
 
 type WorkerFailRequest struct {
@@ -100,7 +106,7 @@ func (s *Service) Claim(ctx context.Context, jobID string, attempt int) (*Genera
 		}
 		updates := map[string]any{
 			"status":     StatusRunning,
-			"stage":      StageSubmittingProvider,
+			"stage":      StageOptimizingPrompt,
 			"progress":   5,
 			"started_at": now,
 			"updated_at": now,
@@ -110,7 +116,7 @@ func (s *Service) Claim(ctx context.Context, jobID string, attempt int) (*Genera
 			return err
 		}
 		job.Status = StatusRunning
-		job.Stage = StageSubmittingProvider
+		job.Stage = StageOptimizingPrompt
 		job.Progress = 5
 		job.StartedAt = &now
 		job.UpdatedAt = now
@@ -146,12 +152,38 @@ func (s *Service) ReportProgress(ctx context.Context, jobID string, req WorkerPr
 		if job.Status != StatusRunning || job.Attempt != req.Attempt {
 			return errInvalidTransition
 		}
-		if err := tx.Model(job).Updates(map[string]any{
+		updates := map[string]any{
 			"stage":      req.Stage,
 			"progress":   req.Progress,
 			"updated_at": now,
 			"version":    job.Version + 1,
-		}).Error; err != nil {
+		}
+		if req.OptimizedPrompt != nil {
+			prompt := strings.TrimSpace(*req.OptimizedPrompt)
+			if prompt != "" {
+				updates["optimized_prompt"] = prompt
+				job.OptimizedPrompt = &prompt
+			}
+		}
+		if len(req.RAGContext) > 0 {
+			updates["rag_context"] = req.RAGContext
+			job.RAGContext = req.RAGContext
+		}
+		if req.RAGVersion != nil && strings.TrimSpace(*req.RAGVersion) != "" {
+			version := strings.TrimSpace(*req.RAGVersion)
+			updates["rag_version"] = version
+			job.RAGVersion = &version
+		}
+		if req.PromptTemplateVersion != nil && strings.TrimSpace(*req.PromptTemplateVersion) != "" {
+			version := strings.TrimSpace(*req.PromptTemplateVersion)
+			updates["prompt_template_version"] = version
+			job.PromptTemplateVersion = &version
+		}
+		if len(req.StructuredPrompt) > 0 {
+			updates["structured_prompt"] = req.StructuredPrompt
+			job.StructuredPrompt = req.StructuredPrompt
+		}
+		if err := tx.Model(job).Updates(updates).Error; err != nil {
 			return err
 		}
 		job.Stage = req.Stage

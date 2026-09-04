@@ -31,6 +31,7 @@ type JobResponse struct {
 	Progress        int                `json:"progress"`
 	RawPrompt       string             `json:"raw_prompt"`
 	OptimizedPrompt *string            `json:"optimized_prompt,omitempty"`
+	ProductType     string             `json:"product_type,omitempty"`
 	Provider        string             `json:"provider"`
 	Attempt         int                `json:"attempt"`
 	MaxAttempts     int                `json:"max_attempts"`

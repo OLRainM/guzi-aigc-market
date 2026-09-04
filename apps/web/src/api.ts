@@ -13,7 +13,8 @@ export type Product = {
 export type ProductList = { items: Product[]; page: number; page_size: number; total: number };
 export type GenerationOutput = { id: string; output_type: string; format: string; mime_type: string; size_bytes: number; content_url?: string };
 export type GenerationJob = {
-  id: string; status: string; stage: string; progress: number; raw_prompt: string; provider: string;
+  id: string; status: string; stage: string; progress: number; raw_prompt: string;
+  optimized_prompt?: string | null; product_type?: string; provider: string;
   attempt: number; max_attempts: number; outputs: GenerationOutput[];
   error?: { code: string; message: string; retryable: boolean } | null;
   created_at: string; updated_at: string;
@@ -77,6 +78,18 @@ export function newIdempotencyKey() {
 
 export function generationStatusLabel(status: string) {
   return ({ QUEUED: '排队中', RUNNING: '生成中', SUCCEEDED: '已完成', FAILED: '失败', CANCELED: '已取消' } as Record<string, string>)[status] ?? status;
+}
+
+export function generationStageLabel(stage: string) {
+  return ({
+    QUEUED: '排队中',
+    OPTIMIZING_PROMPT: '正在优化提示词',
+    SUBMITTING_PROVIDER: '正在提交生成',
+    GENERATING: '正在生成模型',
+    FETCHING_OUTPUT: '正在拉取结果',
+    STORING_OUTPUT: '正在保存模型',
+    COMPLETED: '已完成',
+  } as Record<string, string>)[stage] ?? stage;
 }
 
 let accessToken = '';
