@@ -30,6 +30,7 @@ UPLOAD_ROOTS = [
     ROOT / "apps" / "api",
     ROOT / "apps" / "web",
     ROOT / "apps" / "worker",
+    ROOT / "rag" / "terminology",
 ]
 
 
@@ -184,9 +185,16 @@ updates = {
     'GENERATION_PROVIDER': 'mock',
     'PROVIDER_BASE_URL': '',
     'PROVIDER_TIMEOUT': '60',
-    'PROVIDER_POLL_INTERVAL': '2',
-    'PROVIDER_POLL_TIMEOUT': '180',
-    'GENERATION_JOB_TIMEOUT': '2m',
+    'PROVIDER_POLL_INTERVAL': '8',
+    'PROVIDER_POLL_TIMEOUT': '900',
+    'GENERATION_JOB_TIMEOUT': '15m',
+    'HY3D_BASE_URL': 'https://tokenhub.tencentmaas.com',
+    'HY3D_MODEL': 'hy-3d-3.1',
+    'HY3D_ENABLE_PBR': 'true',
+    'HY3D_FACE_COUNT': '100000',
+    'HY3D_GENERATE_TYPE': 'normal',
+    'LLM_MODEL': 'gpt-4o-mini',
+    'LLM_TIMEOUT': '30',
 }
 lines = []
 seen = set()
@@ -210,6 +218,9 @@ if 'WORKER_INTERNAL_TOKEN' not in keys:
     lines.append('WORKER_INTERNAL_TOKEN=' + secrets.token_urlsafe(32))
 if 'PROVIDER_API_KEY' not in keys:
     lines.append('PROVIDER_API_KEY=')
+for optional_key in ('TOKENHUB_API_KEY', 'LLM_BASE_URL', 'LLM_API_KEY'):
+    if optional_key not in keys:
+        lines.append(f'{optional_key}=')
 path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 path.chmod(0o640)
 print('ENV_PATCHED')
