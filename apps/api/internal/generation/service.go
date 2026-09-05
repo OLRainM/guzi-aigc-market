@@ -173,6 +173,22 @@ func (s *Service) Create(ctx context.Context, userID, idempotencyKey, requestID 
 	return nil, err
 }
 
+func publicJobErrorMessage(code string, status Status) string {
+	switch code {
+	case "GENERATION_CANCELED":
+		return "生成任务已取消"
+	case "GENERATION_TIMEOUT":
+		return "生成任务超时"
+	case "INVALID_REQUEST":
+		return "生成任务参数无效"
+	default:
+		if status == StatusFailed {
+			return "生成任务失败"
+		}
+		return "生成任务未完成"
+	}
+}
+
 func (s *Service) ToResponse(job GenerationJob, outputs []GenerationOutput) JobResponse {
 	if outputs == nil {
 		outputs = []GenerationOutput{}
@@ -184,11 +200,11 @@ func (s *Service) ToResponse(job GenerationJob, outputs []GenerationOutput) JobR
 	}
 	var jobErr *JobError
 	if job.ErrorCode != nil {
-		message := ""
-		if job.ErrorMessage != nil {
-			message = *job.ErrorMessage
+		jobErr = &JobError{
+			Code:      *job.ErrorCode,
+			Message:   publicJobErrorMessage(*job.ErrorCode, job.Status),
+			Retryable: job.Status == StatusFailed && job.Attempt < job.MaxAttempts,
 		}
-		jobErr = &JobError{Code: *job.ErrorCode, Message: message, Retryable: job.Status == StatusFailed && job.Attempt < job.MaxAttempts}
 	}
 	return JobResponse{
 		ID: job.ID, SourceJobID: job.SourceJobID, Status: job.Status, Stage: job.Stage, Progress: job.Progress,

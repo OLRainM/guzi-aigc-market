@@ -43,6 +43,17 @@ func TestSensitiveJobFieldsAreNotSerialized(t *testing.T) {
 	}
 }
 
+func TestPublicJobErrorMessageDoesNotExposeInternalDetails(t *testing.T) {
+	for _, code := range []string{"INTERNAL", "WORKER_ERROR", "PROVIDER_AUTH_SECRET"} {
+		if got := publicJobErrorMessage(code, StatusFailed); got != "生成任务失败" {
+			t.Fatalf("publicJobErrorMessage(%q) = %q", code, got)
+		}
+	}
+	if got := publicJobErrorMessage("GENERATION_TIMEOUT", StatusFailed); got != "生成任务超时" {
+		t.Fatalf("unexpected timeout message: %q", got)
+	}
+}
+
 func ptr(value string) *string { return &value }
 
 func contains(value, part string) bool {

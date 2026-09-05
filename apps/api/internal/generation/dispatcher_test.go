@@ -120,6 +120,15 @@ func TestDispatchPublishesCreatedJobToRedisStream(t *testing.T) {
 	}
 }
 
+func TestOutboxErrorSummaryDoesNotExposeInternalDetails(t *testing.T) {
+	if got := outboxErrorSummary(errors.New("redis://secret@internal:6379 connection refused")); got != "outbox publish failed" {
+		t.Fatalf("unexpected publish summary: %q", got)
+	}
+	if got := outboxErrorSummary(&json.SyntaxError{}); got != "outbox payload invalid" {
+		t.Fatalf("unexpected payload summary: %q", got)
+	}
+}
+
 func TestDispatchRetriesFailedPublish(t *testing.T) {
 	service, router := setupGenerationService(t, nil)
 	publisher := &fakePublisher{err: errors.New("redis unavailable")}

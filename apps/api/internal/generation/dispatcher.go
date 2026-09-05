@@ -3,14 +3,15 @@ package generation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
 const (
-	outboxBatchSize     = 20
-	outboxMaxAttempts   = 20
-	dispatcherInterval  = time.Second
-	outboxBackoffCap    = 30 * time.Second
+	outboxBatchSize    = 20
+	outboxMaxAttempts  = 20
+	dispatcherInterval = time.Second
+	outboxBackoffCap   = 30 * time.Second
 )
 
 func (s *Service) StartDispatcher() {
@@ -64,19 +65,23 @@ func (s *Service) publishOutbox(ctx context.Context, item GenerationOutbox, now 
 
 func (s *Service) markOutboxFailure(ctx context.Context, item GenerationOutbox, now time.Time, publishErr error) error {
 	attempts := item.Attempts + 1
-	message := publishErr.Error()
-	if len(message) > 500 {
-		message = message[:500]
-	}
 	updates := map[string]any{
+		"last_error":   outboxErrorSummary(publishErr),
 		"attempts":     attempts,
-		"last_error":   message,
 		"available_at": now.Add(outboxBackoff(attempts)),
 	}
 	if attempts >= outboxMaxAttempts {
 		updates["status"] = OutboxFailed
 	}
 	return s.db.WithContext(ctx).Model(&GenerationOutbox{}).Where("id = ?", item.ID).Updates(updates).Error
+}
+
+func outboxErrorSummary(err error) string {
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return "outbox payload invalid"
+	}
+	return "outbox publish failed"
 }
 
 func outboxBackoff(attempts int) time.Duration {
