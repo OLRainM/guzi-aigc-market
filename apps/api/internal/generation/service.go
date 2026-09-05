@@ -20,16 +20,18 @@ import (
 const maxActiveJobsPerUser = 5
 
 var (
-	errInvalidArgument     = errors.New("invalid generation argument")
-	errIdempotencyConflict = errors.New("idempotency conflict")
-	errTooManyJobs         = errors.New("too many active generation jobs")
-	errJobNotFound         = errors.New("generation job not found")
-	errInvalidTransition   = errors.New("invalid generation job transition")
-	errOutputNotReady           = errors.New("generation output not ready")
-	errPromptPreviewInvalid     = errors.New("prompt preview is invalid")
+	errInvalidArgument            = errors.New("invalid generation argument")
+	errIdempotencyConflict        = errors.New("idempotency conflict")
+	errTooManyJobs                = errors.New("too many active generation jobs")
+	errJobNotFound                = errors.New("generation job not found")
+	errInvalidTransition          = errors.New("invalid generation job transition")
+	errOutputNotReady             = errors.New("generation output not ready")
+	errPromptPreviewInvalid       = errors.New("prompt preview is invalid")
 	errPromptOptimizerUnavailable = errors.New("prompt optimizer unavailable")
-	ErrJobNotFound              = errJobNotFound
-	ErrOutputNotReady      = errOutputNotReady
+	ErrJobNotFound                = errJobNotFound
+	ErrOutputNotReady             = errOutputNotReady
+	ErrRetryNotAllowed            = errInvalidTransition
+	ErrTooManyJobs                = errTooManyJobs
 )
 
 type Service struct {
@@ -58,6 +60,17 @@ func NewService(db *gorm.DB, assets *asset.Service, rdb *redis.Client, timeout t
 	}
 	service.publisher = NewRedisPublisher(rdb)
 	return service, nil
+}
+
+func (s *Service) AdminGet(ctx context.Context, jobID string) (*GenerationJob, error) {
+	var job GenerationJob
+	if err := s.db.WithContext(ctx).First(&job, "id = ?", jobID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errJobNotFound
+		}
+		return nil, err
+	}
+	return &job, nil
 }
 
 func (s *Service) Create(ctx context.Context, userID, idempotencyKey, requestID string, req CreateJobRequest) (*GenerationJob, error) {

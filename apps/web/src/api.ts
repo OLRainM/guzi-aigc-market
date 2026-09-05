@@ -11,6 +11,9 @@ export type Product = {
   cover_asset_id?: string; model_asset_id?: string; images: AssetFile[]; model?: AssetFile | null;
 };
 export type ProductList = { items: Product[]; page: number; page_size: number; total: number };
+export type AdminJob = GenerationJob;
+export type AuditLog = { id: string; actor_id: string; action: string; target_type: string; target_id: string; request_id: string; before?: Record<string, unknown>; after?: Record<string, unknown>; created_at: string };
+export type AdminList<T> = { items: T[]; page: number; page_size: number; total: number };
 export type GenerationOutput = { id: string; output_type: string; format: string; mime_type: string; size_bytes: number; content_url?: string };
 export type PromptPreview = {
   id: string; raw_prompt: string; product_type: string; optimized_prompt: string;

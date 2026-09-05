@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"aigc-3d-platform/apps/api/internal/account"
+	"aigc-3d-platform/apps/api/internal/admin"
 	"aigc-3d-platform/apps/api/internal/asset"
 	"aigc-3d-platform/apps/api/internal/auth"
 	"aigc-3d-platform/apps/api/internal/catalog"
@@ -106,6 +107,11 @@ func main() {
 		logger.Error("account initialization failed", "error", err)
 		os.Exit(1)
 	}
+	adminHandler, err := admin.New(db, generationHandler.Service())
+	if err != nil {
+		logger.Error("admin initialization failed", "error", err)
+		os.Exit(1)
+	}
 	r := gin.New()
 	r.Use(gin.Recovery(), cors.New(cors.Config{
 		AllowOrigins:     []string{env("CORS_ALLOW_ORIGIN", "http://localhost:5173")},
@@ -125,6 +131,7 @@ func main() {
 	catalogHandler.RegisterRoutes(api, authHandler.Authenticate(), authHandler.ResolveUser)
 	generationHandler.RegisterRoutes(api, authHandler.Authenticate())
 	accountHandler.RegisterRoutes(api, authHandler.Authenticate())
+	adminHandler.RegisterRoutes(api, authHandler.Authenticate())
 	generationHandler.StartDispatcher()
 	generationHandler.StartTimeoutWatcher()
 	logger.Info("api started", "port", port)

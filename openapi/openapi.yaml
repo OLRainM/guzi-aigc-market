@@ -274,7 +274,7 @@ paths:
   /generation-jobs/{job_id}/retry:
     post:
       operationId: retryGenerationJob
-      summary: 重试失败任务（预留，阶段 1 后实现）
+      summary: 重试失败任务
       parameters:
         - $ref: '#/components/parameters/JobId'
       responses:
@@ -289,6 +289,86 @@ paths:
                   job: { $ref: '#/components/schemas/GenerationJob' }
         '404': { $ref: '#/components/responses/JobNotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /admin/users:
+    get:
+      operationId: adminListUsers
+      summary: 管理员分页查看用户
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: keyword
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: 用户分页列表, content: { application/json: { schema: { $ref: '#/components/schemas/AdminUserList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/products:
+    get:
+      operationId: adminListProducts
+      summary: 管理员分页查看商品
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema: { type: string, enum: [DRAFT, PUBLISHED, OFF_SHELF] }
+        - name: keyword
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: 商品分页列表, content: { application/json: { schema: { $ref: '#/components/schemas/AdminProductList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/products/{product_id}/off-shelf:
+    post:
+      operationId: adminOffShelfProduct
+      summary: 管理员下架已发布商品
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: 商品已下架 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 商品不存在 }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/generation-jobs:
+    get:
+      operationId: adminListFailedGenerationJobs
+      summary: 管理员查看失败生成任务
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { description: 失败任务分页列表, content: { application/json: { schema: { $ref: '#/components/schemas/AdminJobList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/generation-jobs/{job_id}/retry:
+    post:
+      operationId: adminRetryGenerationJob
+      summary: 管理员重试失败生成任务
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '202': { description: 任务已重新排队, content: { application/json: { schema: { type: object, required: [job], properties: { job: { $ref: '#/components/schemas/GenerationJob' } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/JobNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/audit-logs:
+    get:
+      operationId: adminListAuditLogs
+      summary: 管理员查看审计日志
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { description: 审计日志分页列表, content: { application/json: { schema: { $ref: '#/components/schemas/AuditLogList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 components:
   securitySchemes:
     bearerAuth:
@@ -296,6 +376,14 @@ components:
       scheme: bearer
       bearerFormat: JWT
   parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
     JobId:
       name: job_id
       in: path
@@ -402,6 +490,80 @@ components:
         page: { type: integer, minimum: 1 }
         page_size: { type: integer, minimum: 1, maximum: 100 }
         total: { type: integer, format: int64, minimum: 0 }
+    AdminUser:
+      type: object
+      required: [id, username, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        email: { type: string, format: email, nullable: true }
+        status: { type: string }
+        roles: { type: array, items: { type: object, additionalProperties: true } }
+        last_login_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AdminProduct:
+      type: object
+      required: [id, seller_id, title, description, price_cents, ip_name, category, condition, stock, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        seller_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        price_cents: { type: integer, format: int64 }
+        ip_name: { type: string }
+        category: { type: string }
+        condition: { type: string }
+        transaction_type: { type: string }
+        shipping_origin: { type: string }
+        stock: { type: integer, minimum: 0 }
+        preorder_note: { type: string }
+        cover_asset_id: { type: string, format: uuid, nullable: true }
+        model_asset_id: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [DRAFT, PUBLISHED, OFF_SHELF] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AdminUserList:
+      allOf:
+        - $ref: '#/components/schemas/Pagination'
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/AdminUser' } }
+    AdminProductList:
+      allOf:
+        - $ref: '#/components/schemas/Pagination'
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/AdminProduct' } }
+    AdminJobList:
+      allOf:
+        - $ref: '#/components/schemas/Pagination'
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/GenerationJob' } }
+    AuditLog:
+      type: object
+      required: [id, actor_id, action, target_type, target_id, request_id, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        actor_id: { type: string, format: uuid }
+        action: { type: string }
+        target_type: { type: string }
+        target_id: { type: string }
+        request_id: { type: string }
+        before: { type: object, nullable: true, additionalProperties: true }
+        after: { type: object, nullable: true, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+    AuditLogList:
+      allOf:
+        - $ref: '#/components/schemas/Pagination'
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/AuditLog' } }
     APIError:
       type: object
       required: [error]
@@ -419,6 +581,9 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
     Unauthorized:
       description: 未认证
+      content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
+    Forbidden:
+      description: 无权执行管理员操作
       content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
     JobNotFound:
       description: 任务不存在或当前用户无权访问

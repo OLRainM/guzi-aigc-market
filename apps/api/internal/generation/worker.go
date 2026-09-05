@@ -417,7 +417,27 @@ func (s *Service) Cancel(ctx context.Context, userID, jobID string) (*Generation
 	return updated, outputs, nil
 }
 
+func (s *Service) AdminRetry(ctx context.Context, jobID, requestID string) (*GenerationJob, error) {
+	job, err := s.loadJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	return s.Retry(ctx, job.UserID, jobID, requestID)
+}
+
+func (s *Service) AdminRetryWithAudit(ctx context.Context, jobID, requestID string, audit func(*gorm.DB, *GenerationJob, *GenerationJob) error) (*GenerationJob, error) {
+	job, err := s.loadJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	return s.retry(ctx, job.UserID, jobID, requestID, audit)
+}
+
 func (s *Service) Retry(ctx context.Context, userID, jobID, requestID string) (*GenerationJob, error) {
+	return s.retry(ctx, userID, jobID, requestID, nil)
+}
+
+func (s *Service) retry(ctx context.Context, userID, jobID, requestID string, audit func(*gorm.DB, *GenerationJob, *GenerationJob) error) (*GenerationJob, error) {
 	now := s.now().UTC()
 	var retried *GenerationJob
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -434,6 +454,7 @@ func (s *Service) Retry(ctx context.Context, userID, jobID, requestID string) (*
 		if job.Attempt >= job.MaxAttempts {
 			return errInvalidTransition
 		}
+		before := *job
 		var active int64
 		if err := tx.Model(&GenerationJob{}).Where("user_id = ? AND status IN ?", userID, []Status{StatusQueued, StatusRunning}).Count(&active).Error; err != nil {
 			return err
@@ -479,6 +500,11 @@ func (s *Service) Retry(ctx context.Context, userID, jobID, requestID string) (*
 			return err
 		}
 		retried = job
+		if audit != nil {
+			if err := audit(tx, &before, job); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	return retried, err
