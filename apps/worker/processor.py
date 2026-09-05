@@ -127,12 +127,27 @@ class JobProcessor:
             if status != "RUNNING":
                 raise RuntimeError(f"unexpected claim status: {status}")
             job = claimed.get("job") if isinstance(claimed.get("job"), dict) else {}
-            prompt = str(job.get("optimized_prompt") or job.get("raw_prompt") or "").strip()
+            raw_prompt = str(job.get("raw_prompt") or "").strip()
             product_type = str(job.get("product_type") or "")
             parameters = {"attempt": attempt, "product_type": product_type}
-            if not prompt:
+            if not raw_prompt:
                 raise ProviderError(ProviderErrorCode.INVALID_REQUEST, "prompt is required", retryable=False)
             await self._progress(job_id, attempt, "OPTIMIZING_PROMPT", 25)
+            optimized = await self.optimizer.optimize(raw_prompt, product_type)
+            prompt = optimized.text.strip()
+            await self._progress(
+                job_id,
+                attempt,
+                "OPTIMIZING_PROMPT",
+                25,
+                {
+                    "optimized_prompt": prompt,
+                    "rag_context": optimized.rag_context,
+                    "rag_version": optimized.rag_version,
+                    "template_version": optimized.template_version,
+                    "structured_prompt": optimized.structured,
+                },
+            )
             await self._progress(job_id, attempt, "SUBMITTING_PROVIDER", 40)
             submission = await self.provider.submit(prompt, parameters)
             progress = await self._wait_for_success(job_id, attempt, submission.provider_job_id)

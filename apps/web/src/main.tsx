@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { apiBase, assetSrc, generationStageLabel, generationStatusLabel, newIdempotencyKey, priceLabel, request, refreshSession, setAccessToken, statusLabel, type AdminList, type AuditLog, type AuthPayload, type GenerationJob, type GenerationJobList, type Product, type ProductList, type PromptPreview, type User } from './api';
 import { AccountCenter, CheckoutPage, FavoritesPage, OrderDetailPage, OrdersPage, ProductActions, SandboxPage } from './accountPages';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { useQuery } from './hooks/useQuery';
 import './styles.css';
 
 const ModelViewer = lazy(() => import('./ModelViewer').then(module => ({ default: module.ModelViewer })));
@@ -134,12 +136,10 @@ function GenerationWorkspace() {
 }
 
 function Market() {
-  const [data, setData] = useState<ProductList | null>(null);
   const [keyword, setKeyword] = useState('');
-  const [error, setError] = useState('');
-  const load = (query = '') => { request<ProductList>(`/api/v1/products?page=1&page_size=20${query}`).then(setData).catch(reason => setError(reason instanceof Error ? reason.message : '加载失败')); };
-  useEffect(() => { load(); }, []);
-  return <main className="wide"><p className="eyebrow">MARKET</p><h1>商品市场</h1><form className="toolbar" onSubmit={event => { event.preventDefault(); load(keyword.trim() ? `&keyword=${encodeURIComponent(keyword.trim())}` : ''); }}><input value={keyword} onChange={e => setKeyword(e.target.value)} placeholder="搜索商品标题或描述" /><button>搜索</button></form>{error && <p className="error" role="alert">{error}</p>}{data && data.items.length === 0 && <p className="muted">暂无已发布商品。</p>}<div className="card-grid">{data?.items.map(product => <Link className="product-card" to={`/products/${product.id}`} key={product.id}>{product.images[0] ? <img src={assetSrc(product.images[0])} alt={product.title} /> : <div className="placeholder-cover">暂无图片</div>}<strong>{product.title}</strong><span>{priceLabel(product.price_cents)}</span><em>{product.ip_name} · {product.category}{product.model ? ' · 含 3D' : ''}</em></Link>)}</div></main>;
+  const [query, setQuery] = useState('');
+  const { data, error, loading } = useQuery<ProductList>(`/api/v1/products?page=1&page_size=20${query}`);
+  return <main className="wide"><p className="eyebrow">MARKET</p><h1>商品市场</h1><form className="toolbar" onSubmit={event => { event.preventDefault(); setQuery(keyword.trim() ? `&keyword=${encodeURIComponent(keyword.trim())}` : ''); }}><input value={keyword} onChange={e => setKeyword(e.target.value)} placeholder="搜索商品标题或描述" /><button>搜索</button></form>{error && <p className="error" role="alert">{error}</p>}{loading && <p className="muted" role="status">正在加载商品…</p>}{!loading && data && data.items.length === 0 && <p className="muted">暂无已发布商品。</p>}<div className="card-grid">{data?.items.map(product => <Link className="product-card" to={`/products/${product.id}`} key={product.id}>{product.images[0] ? <img src={assetSrc(product.images[0])} alt={product.title} /> : <div className="placeholder-cover">暂无图片</div>}<strong>{product.title}</strong><span>{priceLabel(product.price_cents)}</span><em>{product.ip_name} · {product.category}{product.model ? ' · 含 3D' : ''}</em></Link>)}</div></main>;
 }
 
 function ProductDetail() {
@@ -208,10 +208,8 @@ function Publish() {
 }
 
 function MyListings() {
-  const [data, setData] = useState<ProductList | null>(null);
-  const [error, setError] = useState('');
-  useEffect(() => { request<ProductList>('/api/v1/products/mine').then(setData).catch(reason => setError(reason instanceof Error ? reason.message : '加载失败')); }, []);
-  return <section><div className="toolbar"><h2>我的发布</h2><Link className="account-link" to="/sell">发布商品</Link></div>{error && <p className="error" role="alert">{error}</p>}{data && data.items.length === 0 && <p className="muted">还没有商品，先发布一个草稿吧。</p>}<div className="card-grid">{data?.items.map(product => <Link className="product-card" to={`/products/${product.id}`} key={product.id}>{product.images[0] ? <img src={assetSrc(product.images[0])} alt={product.title} /> : <div className="placeholder-cover">暂无图片</div>}<strong>{product.title}</strong><span>{statusLabel(product.status)} · {priceLabel(product.price_cents)}</span></Link>)}</div></section>;
+  const { data, error, loading } = useQuery<ProductList>('/api/v1/products/mine');
+  return <section><div className="toolbar"><h2>我的发布</h2><Link className="account-link" to="/sell">发布商品</Link></div>{error && <p className="error" role="alert">{error}</p>}{loading && <p className="muted" role="status">正在加载我的发布…</p>}{!loading && data && data.items.length === 0 && <p className="muted">还没有商品，先发布一个草稿吧。</p>}<div className="card-grid">{data?.items.map(product => <Link className="product-card" to={`/products/${product.id}`} key={product.id}>{product.images[0] ? <img src={assetSrc(product.images[0])} alt={product.title} /> : <div className="placeholder-cover">暂无图片</div>}<strong>{product.title}</strong><span>{statusLabel(product.status)} · {priceLabel(product.price_cents)}</span></Link>)}</div></section>;
 }
 
 function AdminPage() {

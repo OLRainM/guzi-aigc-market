@@ -5,6 +5,8 @@
 
 # 本机远端登录配置（含账号密码，禁止入库）
 .deploy/server.env
+.deploy/_*
+.commit-message*.tmp
 
 # Node
 node_modules/
