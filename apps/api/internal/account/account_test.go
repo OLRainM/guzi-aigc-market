@@ -429,3 +429,61 @@ func TestSimulatedOrderCancelRestoresStockAndRefund(t *testing.T) {
 		t.Fatalf("refund after seller cancel = %d %s", snapshot.Code, snapshot.Body.String())
 	}
 }
+
+func TestOrderAccessAndInvalidStateContracts(t *testing.T) {
+	router, db := setupAccountServer(t)
+	seller := register(t, router, "seller-contract")
+	buyer := register(t, router, "buyer-contract")
+	thirdParty := register(t, router, "third-contract")
+	productID := createPublishedProduct(t, router, db, seller, "状态契约手办", 12000)
+	addressID := createAddress(t, router, buyer)
+	created := doJSONHeader(router, http.MethodPost, "/api/v1/orders", buyer, "55555555-5555-5555-5555-555555555555", map[string]any{
+		"product_id": productID, "address_id": addressID, "quantity": 1,
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create order = %d %s", created.Code, created.Body.String())
+	}
+	var orderBody struct {
+		Order struct {
+			ID string `json:"id"`
+		} `json:"order"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &orderBody); err != nil {
+		t.Fatal(err)
+	}
+	orderPath := "/api/v1/orders/" + orderBody.Order.ID
+
+	if rec := doJSON(router, http.MethodGet, orderPath, thirdParty, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("third-party order read = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(router, http.MethodPost, orderPath+"/pay", seller, map[string]any{}); rec.Code != http.StatusForbidden {
+		t.Fatalf("seller pay = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(router, http.MethodPost, orderPath+"/ship", seller, map[string]any{"tracking_no": "SF-CONTRACT"}); rec.Code != http.StatusConflict {
+		t.Fatalf("ship before payment = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(router, http.MethodPost, orderPath+"/cancel", seller, map[string]any{"reason": "not allowed"}); rec.Code != http.StatusForbidden {
+		t.Fatalf("seller cancel pending = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(router, http.MethodPost, orderPath+"/pay", buyer, map[string]any{}); rec.Code != http.StatusOK {
+		t.Fatalf("buyer pay = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(router, http.MethodPost, orderPath+"/pay", buyer, map[string]any{}); rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate pay = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(router, http.MethodPost, orderPath+"/cancel", buyer, map[string]any{"reason": "not allowed"}); rec.Code != http.StatusForbidden {
+		t.Fatalf("buyer cancel paid = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(router, http.MethodPost, orderPath+"/ship", seller, map[string]any{"tracking_no": "SF-CONTRACT"}); rec.Code != http.StatusOK {
+		t.Fatalf("seller ship = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(router, http.MethodPost, orderPath+"/confirm", seller, map[string]any{}); rec.Code != http.StatusForbidden {
+		t.Fatalf("seller confirm = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(router, http.MethodPost, orderPath+"/confirm", buyer, map[string]any{}); rec.Code != http.StatusOK {
+		t.Fatalf("buyer confirm = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(router, http.MethodPost, orderPath+"/confirm", buyer, map[string]any{}); rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate confirm = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
