@@ -6,6 +6,9 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { Maximize2, Minimize2, RotateCcw } from 'lucide-react';
 import { MAX_MODEL_BYTES, assetSrc, formatMegabytes, requestBlob, type AssetFile } from './api';
 
+const MODEL_DISPLAY_SIZE = 1.7;
+const CAMERA_POSITION: [number, number, number] = [0, 0.45, 2.5];
+
 type Props = {
   model: AssetFile;
   fallbackImages?: AssetFile[];
@@ -64,7 +67,7 @@ function FittedModel({ url, onReady }: { url: string; onReady: () => void }) {
     const box = new Box3().setFromObject(cloned);
     const size = box.getSize(new Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 0.0001);
-    cloned.scale.setScalar(1.7 / maxDim);
+    cloned.scale.setScalar(MODEL_DISPLAY_SIZE / maxDim);
     const fitted = new Box3().setFromObject(cloned);
     cloned.position.sub(fitted.getCenter(new Vector3()));
     return cloned;
@@ -99,7 +102,7 @@ function LoadProgress({ visible }: { visible: boolean }) {
 function CameraRig({ controlsRef }: { controlsRef: MutableRefObject<OrbitControlsImpl | null> }) {
   const { camera } = useThree();
   useEffect(() => {
-    camera.position.set(0, 0.45, 2.5);
+    camera.position.set(...CAMERA_POSITION);
     camera.lookAt(0, 0, 0);
   }, [camera]);
   return (
@@ -122,11 +125,16 @@ export function ModelViewer({ model, fallbackImages = [], compact = false }: Pro
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
+  const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const node = shellRef.current;
     if (!node) return;
-    const sync = () => setFullscreen(document.fullscreenElement === node);
+    const sync = () => {
+      const isFullscreen = document.fullscreenElement === node;
+      setFullscreen(isFullscreen);
+      if (!isFullscreen) fullscreenButtonRef.current?.focus();
+    };
     document.addEventListener('fullscreenchange', sync);
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
@@ -226,7 +234,7 @@ export function ModelViewer({ model, fallbackImages = [], compact = false }: Pro
           <button type="button" className="ghost" onClick={resetView} disabled={showFallback} aria-label="重置视角">
             <RotateCcw size={16} /> 重置视角
           </button>
-          <button type="button" className="ghost" onClick={() => void toggleFullscreen()} aria-label={fullscreen ? '退出全屏' : '全屏预览'}>
+          <button ref={fullscreenButtonRef} type="button" className="ghost" onClick={() => void toggleFullscreen()} aria-label={fullscreen ? '退出全屏' : '全屏预览'}>
             {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />} {fullscreen ? '退出全屏' : '全屏'}
           </button>
         </div>

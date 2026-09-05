@@ -1,9 +1,10 @@
-import { StrictMode, Suspense, createContext, lazy, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { StrictMode, Suspense, createContext, lazy, memo, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { apiBase, assetSrc, generationStageLabel, generationStatusLabel, newIdempotencyKey, priceLabel, request, refreshSession, setAccessToken, statusLabel, type AdminList, type AuditLog, type AuthPayload, type GenerationJob, type GenerationJobList, type Product, type ProductList, type PromptPreview, type User } from './api';
 import { AccountCenter, CheckoutPage, FavoritesPage, OrderDetailPage, OrdersPage, ProductActions, SandboxPage } from './accountPages';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { LoadingSpinner } from './components/LoadingSpinner';
 import { useQuery } from './hooks/useQuery';
 import './styles.css';
 
@@ -52,10 +53,14 @@ function GenerationWorkspace() {
   useEffect(() => { void load(); }, []);
   useEffect(() => {
     if (!active || ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(active.status)) return;
+    let cancelled = false;
     const timer = window.setInterval(() => {
-      loadJob(active.id).catch(() => undefined);
+      if (!cancelled) void loadJob(active.id).catch(() => undefined);
     }, 2000);
-    return () => window.clearInterval(timer);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [active?.id, active?.status]);
   const previewPrompt = async (event: FormEvent) => {
     event.preventDefault(); setError(''); setSubmitting(true);
@@ -139,16 +144,15 @@ function Market() {
   const [keyword, setKeyword] = useState('');
   const [query, setQuery] = useState('');
   const { data, error, loading } = useQuery<ProductList>(`/api/v1/products?page=1&page_size=20${query}`);
-  return <main className="wide"><p className="eyebrow">MARKET</p><h1>商品市场</h1><form className="toolbar" onSubmit={event => { event.preventDefault(); setQuery(keyword.trim() ? `&keyword=${encodeURIComponent(keyword.trim())}` : ''); }}><input value={keyword} onChange={e => setKeyword(e.target.value)} placeholder="搜索商品标题或描述" /><button>搜索</button></form>{error && <p className="error" role="alert">{error}</p>}{loading && <p className="muted" role="status">正在加载商品…</p>}{!loading && data && data.items.length === 0 && <p className="muted">暂无已发布商品。</p>}<div className="card-grid">{data?.items.map(product => <Link className="product-card" to={`/products/${product.id}`} key={product.id}>{product.images[0] ? <img src={assetSrc(product.images[0])} alt={product.title} /> : <div className="placeholder-cover">暂无图片</div>}<strong>{product.title}</strong><span>{priceLabel(product.price_cents)}</span><em>{product.ip_name} · {product.category}{product.model ? ' · 含 3D' : ''}</em></Link>)}</div></main>;
+  return <main className="wide"><p className="eyebrow">MARKET</p><h1>商品市场</h1><form className="toolbar" onSubmit={event => { event.preventDefault(); setQuery(keyword.trim() ? `&keyword=${encodeURIComponent(keyword.trim())}` : ''); }}><input value={keyword} onChange={e => setKeyword(e.target.value)} placeholder="搜索商品标题或描述" /><button>搜索</button></form>{error && <p className="error" role="alert">{error}</p>}{loading && <LoadingSpinner label="正在加载商品…" />}{!loading && data && data.items.length === 0 && <p className="muted">暂无已发布商品。</p>}<div className="card-grid">{data?.items.map(product => <Link className="product-card" to={`/products/${product.id}`} key={product.id}>{product.images[0] ? <img src={assetSrc(product.images[0])} alt={product.title} /> : <div className="placeholder-cover">暂无图片</div>}<strong>{product.title}</strong><span>{priceLabel(product.price_cents)}</span><em>{product.ip_name} · {product.category}{product.model ? ' · 含 3D' : ''}</em></Link>)}</div></main>;
 }
 
 function ProductDetail() {
   const { id } = useParams();
-  const [product, setProduct] = useState<Product | null>(null);
-  const [error, setError] = useState('');
-  useEffect(() => { if (!id) return; request<{ product: Product }>(`/api/v1/products/${id}`).then(body => setProduct(body.product)).catch(reason => setError(reason instanceof Error ? reason.message : '加载失败')); }, [id]);
+  const { data, error, loading } = useQuery<{ product: Product }>(`/api/v1/products/${id ?? ''}`, Boolean(id));
+  const product = data?.product ?? null;
   if (error) return <main><p className="error" role="alert">{error}</p></main>;
-  if (!product) return <main><p className="lead">正在加载商品…</p></main>;
+  if (loading || !product) return <main><LoadingSpinner label="正在加载商品…" fullscreen /></main>;
   return (
     <main className="wide">
       <p className="eyebrow">{product.ip_name}</p>
@@ -209,15 +213,20 @@ function Publish() {
 
 function MyListings() {
   const { data, error, loading } = useQuery<ProductList>('/api/v1/products/mine');
-  return <section><div className="toolbar"><h2>我的发布</h2><Link className="account-link" to="/sell">发布商品</Link></div>{error && <p className="error" role="alert">{error}</p>}{loading && <p className="muted" role="status">正在加载我的发布…</p>}{!loading && data && data.items.length === 0 && <p className="muted">还没有商品，先发布一个草稿吧。</p>}<div className="card-grid">{data?.items.map(product => <Link className="product-card" to={`/products/${product.id}`} key={product.id}>{product.images[0] ? <img src={assetSrc(product.images[0])} alt={product.title} /> : <div className="placeholder-cover">暂无图片</div>}<strong>{product.title}</strong><span>{statusLabel(product.status)} · {priceLabel(product.price_cents)}</span></Link>)}</div></section>;
+  return <section><div className="toolbar"><h2>我的发布</h2><Link className="account-link" to="/sell">发布商品</Link></div>{error && <p className="error" role="alert">{error}</p>}{loading && <LoadingSpinner label="正在加载我的发布…" />}{!loading && data && data.items.length === 0 && <p className="muted">还没有商品，先发布一个草稿吧。</p>}<div className="card-grid">{data?.items.map(product => <Link className="product-card" to={`/products/${product.id}`} key={product.id}>{product.images[0] ? <img src={assetSrc(product.images[0])} alt={product.title} /> : <div className="placeholder-cover">暂无图片</div>}<strong>{product.title}</strong><span>{statusLabel(product.status)} · {priceLabel(product.price_cents)}</span></Link>)}</div></section>;
 }
 
 function AdminPage() {
-  const [users, setUsers] = useState<AdminList<User> | null>(null); const [products, setProducts] = useState<AdminList<Product> | null>(null); const [jobs, setJobs] = useState<AdminList<GenerationJob> | null>(null); const [logs, setLogs] = useState<AdminList<AuditLog> | null>(null); const [error, setError] = useState('');
-  const load = async () => { try { const [u, p, j, l] = await Promise.all([request<AdminList<User>>('/api/v1/admin/users'), request<AdminList<Product>>('/api/v1/admin/products'), request<AdminList<GenerationJob>>('/api/v1/admin/generation-jobs'), request<AdminList<AuditLog>>('/api/v1/admin/audit-logs')]); setUsers(u); setProducts(p); setJobs(j); setLogs(l); } catch (reason) { setError(reason instanceof Error ? reason.message : '加载失败'); } };
-  useEffect(() => { void load(); }, []);
-  const action = async (path: string) => { try { await request(path, { method: 'POST' }); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败'); } };
-  return <main className="wide"><p className="eyebrow">ADMIN CONSOLE</p><h1>管理后台</h1><p className="lead">仅管理员可见。商品下架、失败任务重试均会记录操作者、前后状态和请求 ID。</p>{error && <p className="error" role="alert">{error}</p>}<section className="split-grid"><div className="auth-card"><h2>用户（{users?.total ?? '…'}）</h2>{users?.items.map(user => <p className="profile-row" key={user.id}><strong>{user.username}</strong><span>{user.roles.map(role => role.code).join(', ')}</span></p>)}</div><div className="auth-card"><h2>商品（{products?.total ?? '…'}）</h2>{products?.items.map(product => <p className="profile-row" key={product.id}><strong>{product.title}</strong><span>{statusLabel(product.status)} {product.status === 'PUBLISHED' && <button onClick={() => void action(`/api/v1/admin/products/${product.id}/off-shelf`)}>下架</button>}</span></p>)}</div></section><section className="auth-card"><h2>失败生成任务（{jobs?.total ?? '…'}）</h2>{jobs?.items.map(job => <p className="profile-row" key={job.id}><strong>{job.raw_prompt}</strong><span>{job.error?.message ?? '失败'} {job.attempt < job.max_attempts && <button onClick={() => void action(`/api/v1/admin/generation-jobs/${job.id}/retry`)}>重试</button>}</span></p>)}</section><section className="auth-card"><h2>审计日志（{logs?.total ?? '…'}）</h2>{logs?.items.map(log => <p className="profile-row" key={log.id}><strong>{log.action}</strong><span>{log.target_type}/{log.target_id} · {log.request_id}</span></p>)}</section></main>;
+  const [reloadKey, setReloadKey] = useState(0);
+  const [error, setError] = useState('');
+  const { data: users, error: usersError, loading: usersLoading } = useQuery<AdminList<User>>(`/api/v1/admin/users?refresh=${reloadKey}`);
+  const { data: products, error: productsError, loading: productsLoading } = useQuery<AdminList<Product>>(`/api/v1/admin/products?refresh=${reloadKey}`);
+  const { data: jobs, error: jobsError, loading: jobsLoading } = useQuery<AdminList<GenerationJob>>(`/api/v1/admin/generation-jobs?refresh=${reloadKey}`);
+  const { data: logs, error: logsError, loading: logsLoading } = useQuery<AdminList<AuditLog>>(`/api/v1/admin/audit-logs?refresh=${reloadKey}`);
+  const loadError = error || usersError || productsError || jobsError || logsError;
+  const loading = usersLoading || productsLoading || jobsLoading || logsLoading;
+  const action = async (path: string) => { try { await request(path, { method: 'POST' }); setReloadKey(current => current + 1); } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败'); } };
+  return <main className="wide"><p className="eyebrow">ADMIN CONSOLE</p><h1>管理后台</h1><p className="lead">仅管理员可见。商品下架、失败任务重试均会记录操作者、前后状态和请求 ID。</p>{loadError && <p className="error" role="alert">{loadError}</p>}{loading && <LoadingSpinner label="正在加载管理数据…" />}{error && <p className="error" role="alert">{error}</p>}<section className="split-grid"><div className="auth-card"><h2>用户（{users?.total ?? '…'}）</h2>{users?.items.map(user => <p className="profile-row" key={user.id}><strong>{user.username}</strong><span>{user.roles.map(role => role.code).join(', ')}</span></p>)}</div><div className="auth-card"><h2>商品（{products?.total ?? '…'}）</h2>{products?.items.map(product => <p className="profile-row" key={product.id}><strong>{product.title}</strong><span>{statusLabel(product.status)} {product.status === 'PUBLISHED' && <button onClick={() => void action(`/api/v1/admin/products/${product.id}/off-shelf`)}>下架</button>}</span></p>)}</div></section><section className="auth-card"><h2>失败生成任务（{jobs?.total ?? '…'}）</h2>{jobs?.items.map(job => <p className="profile-row" key={job.id}><strong>{job.raw_prompt}</strong><span>{job.error?.message ?? '失败'} {job.attempt < job.max_attempts && <button onClick={() => void action(`/api/v1/admin/generation-jobs/${job.id}/retry`)}>重试</button>}</span></p>)}</section><section className="auth-card"><h2>审计日志（{logs?.total ?? '…'}）</h2>{logs?.items.map(log => <p className="profile-row" key={log.id}><strong>{log.action}</strong><span>{log.target_type}/{log.target_id} · {log.request_id}</span></p>)}</section></main>;
 }
 function AuthPage() {
   const [mode, setMode] = useState<'login' | 'register'>('login'); const [identifier, setIdentifier] = useState(''); const [username, setUsername] = useState(''); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [submitting, setSubmitting] = useState(false);
@@ -233,7 +242,7 @@ function Profile() {
   const logout = async () => { await auth.logout(); navigate('/login', { replace: true }); };
   return <><AccountCenter onLogout={logout} /><div className="wide-wrap"><MyListings /></div></>;
 }
-function Navigation() { const auth = useAuth(); const isAdmin = auth.user?.roles.some(role => role.code === 'ADMIN'); return <nav><div className="nav-links"><Link to="/">首页</Link><Link to="/market">商品市场</Link><Link to="/sell">发布商品</Link><Link to="/favorites">收藏</Link><Link to="/orders">模拟订单</Link><Link to="/sandbox">交易沙盒</Link><Link to="/workspace/generation">AI 工作台</Link><Link to="/me">个人中心</Link>{isAdmin && <Link to="/admin">管理后台</Link>}</div><Link className="account-link" to={auth.user ? '/me' : '/login'}>{auth.user?.username ?? '登录 / 注册'}</Link></nav>; }
-function Footer() { return <footer>AIGC 3D Platform</footer>; }
+const Navigation = memo(function Navigation() { const auth = useAuth(); const isAdmin = auth.user?.roles.some(role => role.code === 'ADMIN'); return <nav><div className="nav-links"><Link to="/">首页</Link><Link to="/market">商品市场</Link><Link to="/sell">发布商品</Link><Link to="/favorites">收藏</Link><Link to="/orders">模拟订单</Link><Link to="/sandbox">交易沙盒</Link><Link to="/workspace/generation">AI 工作台</Link><Link to="/me">个人中心</Link>{isAdmin && <Link to="/admin">管理后台</Link>}</div><Link className="account-link" to={auth.user ? '/me' : '/login'}>{auth.user?.username ?? '登录 / 注册'}</Link></nav>; });
+const Footer = memo(function Footer() { return <footer>AIGC 3D Platform</footer>; });
 function App() { return <AuthProvider><Navigation/><Routes><Route path="/" element={<Home/>}/><Route path="/login" element={<AuthPage/>}/><Route path="/market" element={<Market/>}/><Route path="/sell" element={<Protected><Publish/></Protected>}/><Route path="/products/:id" element={<ProductDetail/>}/><Route path="/workspace/generation" element={<Protected><GenerationWorkspace/></Protected>}/><Route path="/favorites" element={<Protected><FavoritesPage/></Protected>}/><Route path="/checkout" element={<Protected><CheckoutPage/></Protected>}/><Route path="/orders" element={<Protected><OrdersPage/></Protected>}/><Route path="/orders/:id" element={<Protected><OrderDetailPage/></Protected>}/><Route path="/sandbox" element={<Protected><SandboxPage/></Protected>}/><Route path="/me" element={<Protected><Profile/></Protected>}/><Route path="/admin" element={<Protected><AdminPage/></Protected>}/></Routes><Footer/></AuthProvider>; }
 createRoot(document.getElementById('root')!).render(<StrictMode><BrowserRouter><App/></BrowserRouter></StrictMode>);

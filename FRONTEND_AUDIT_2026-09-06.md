@@ -114,7 +114,7 @@ function useQuery<T>(url: string) {
 
 ## 🟡 中严重度问题（应尽快处理）
 
-### 5. **组件缺少性能优化**
+### 5. **组件缺少性能优化** —— 部分已解决
 **问题**：
 - `Navigation` 和 `Footer` 每次路由切换都重新渲染
 - 事件处理器未使用 `useCallback`
@@ -220,7 +220,7 @@ useEffect(() => {
 }, [activeJob?.id, activeJob?.status]);
 ```
 
-### 9. **缺少加载状态统一组件**
+### 9. **缺少加载状态统一组件** —— 已解决
 **问题**：每个页面都写 `{loading && <p>加载中...</p>}`  
 **改进**：
 ```typescript
@@ -256,7 +256,7 @@ npm install react-hook-form zod @hookform/resolvers
 ### 11. **代码注释不足**
 **位置**：`ModelViewer.tsx:39-49` 复杂的资源清理逻辑缺少注释
 
-### 12. **Magic Numbers 未抽离**
+### 12. **Magic Numbers 未抽离** —— 部分已解决
 **示例**：
 - `ModelViewer.tsx:67` - `1.7` 缩放比例
 - `Generation.tsx:72` - `3000` 轮询间隔
@@ -274,7 +274,7 @@ const CONFIG = {
 };
 ```
 
-### 13. **可访问性改进**
+### 13. **可访问性改进** —— 部分已解决
 - 按钮缺少 `aria-label`（ModelViewer.tsx:226-231）
 - 表单缺少 `<label>` 关联（多处）
 - 焦点管理缺失（全屏切换后）
@@ -314,10 +314,10 @@ const CONFIG = {
 
 ### 📅 下周优化
 
-5. 为 Navigation/Footer 添加 `memo`
+5. ✅ 为 Navigation/Footer 添加 `memo`
 6. 提取表单处理 hook（useForm）
-7. 创建基础 UI 组件库（Button, Card, ErrorMessage）
-8. 修复轮询逻辑终止条件
+7. ✅ 创建基础 UI 组件（LoadingSpinner）
+8. ✅ 修复轮询逻辑终止条件
 
 ### 🎯 月度改进
 

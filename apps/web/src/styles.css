@@ -539,6 +539,40 @@ h2 {
   backdrop-filter: var(--glass-blur);
 }
 
+.loading-inline,
+.loading-fullscreen {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-secondary);
+}
+
+.loading-inline {
+  padding: var(--space-md) 0;
+}
+
+.loading-fullscreen {
+  min-height: 45vh;
+  justify-content: center;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-medium);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}
+
 .error-page {
   min-height: 60vh;
   display: grid;

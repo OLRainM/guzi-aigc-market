@@ -1,5 +1,7 @@
 export const apiBase = import.meta.env.VITE_API_BASE_URL || '';
-export const MAX_MODEL_BYTES = 20 * 1024 * 1024;
+export const BYTES_PER_MEGABYTE = 1024 * 1024;
+export const MAX_MODEL_BYTES = 20 * BYTES_PER_MEGABYTE;
+export const HTTP_UNAUTHORIZED = 401;
 
 export type Role = { code: string; name: string };
 export type User = { id: string; username: string; email?: string; status: string; roles: Role[] };
@@ -165,5 +167,5 @@ export function statusLabel(status: string) {
 }
 
 export function formatMegabytes(bytes: number) {
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / BYTES_PER_MEGABYTE).toFixed(2)} MB`;
 }
