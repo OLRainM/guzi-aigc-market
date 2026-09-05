@@ -67,6 +67,13 @@ func page(c *gin.Context) (int, int) {
 	return p, s
 }
 func requestID(c *gin.Context) string { return c.GetString("request_id") }
+
+func escapeLikePattern(value string) string {
+	value = strings.ReplaceAll(value, "\\\\", "\\\\\\\\")
+	value = strings.ReplaceAll(value, "%", "\\\\%")
+	return strings.ReplaceAll(value, "_", "\\\\_")
+}
+
 func writeError(c *gin.Context, status int, message string) {
 	c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": "ADMIN_ERROR", "message": message, "request_id": requestID(c)}})
 }
@@ -74,9 +81,9 @@ func writeError(c *gin.Context, status int, message string) {
 func (h *Handler) users(c *gin.Context) {
 	p, s := page(c)
 	q := h.db.WithContext(c.Request.Context()).Model(&auth.User{})
-	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
+	if keyword := escapeLikePattern(strings.TrimSpace(c.Query("keyword"))); keyword != "" {
 		like := "%" + keyword + "%"
-		q = q.Where("username LIKE ? OR email LIKE ?", like, like)
+		q = q.Where(`username LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\'`, like, like)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -97,8 +104,9 @@ func (h *Handler) products(c *gin.Context) {
 	if status := strings.TrimSpace(c.Query("status")); status != "" {
 		q = q.Where("status = ?", status)
 	}
-	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
-		q = q.Where("title LIKE ? OR description LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+	if keyword := escapeLikePattern(strings.TrimSpace(c.Query("keyword"))); keyword != "" {
+		like := "%" + keyword + "%"
+		q = q.Where(`title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'`, like, like)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {

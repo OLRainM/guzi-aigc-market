@@ -224,5 +224,4 @@ class JobProcessor:
         try:
             await self.api.fail(job_id, attempt, error_code, error_message, retryable)
         except Exception:
-            logger.exception("failed to report job failure", extra={"job_id": job_id})
-            raise
+            logger.exception("failed to report job failure", extra={"job_id": job_id, "attempt": attempt})

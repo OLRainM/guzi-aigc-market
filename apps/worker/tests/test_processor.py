@@ -89,6 +89,15 @@ class JobProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(api.calls[-1][0], "fail")
         self.assertEqual(api.calls[-1][1]["error_code"], "INVALID_REQUEST")
 
+    async def test_failure_report_errors_do_not_escape(self) -> None:
+        class FailingAPI(FakeAPI):
+            async def fail(self, job_id: str, attempt: int, error_code: str, error_message: str, retryable: bool) -> dict:
+                raise RuntimeError("api unavailable")
+
+        processor = JobProcessor(FailingAPI(prompt="   "), MockProvider(), FakeOptimizer())
+        result = await processor.process(sample_message())
+        self.assertEqual(result, "FAILED")
+
     async def test_rejects_empty_glb(self) -> None:
         class EmptyOutputProvider(MockProvider):
             async def fetch_outputs(self, provider_job_id: str):

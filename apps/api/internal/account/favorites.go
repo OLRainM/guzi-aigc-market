@@ -30,13 +30,13 @@ type batchIDsRequest struct {
 
 type favoriteView struct {
 	Favorite
-	Status          string `json:"status"`
-	StatusLabel     string `json:"status_label"`
-	CurrentTitle    string `json:"current_title,omitempty"`
-	CurrentPriceCents int64 `json:"current_price_cents,omitempty"`
-	CurrentStatus   string `json:"current_status,omitempty"`
-	CoverURL        string `json:"cover_url,omitempty"`
-	Available       bool   `json:"available"`
+	Status            string `json:"status"`
+	StatusLabel       string `json:"status_label"`
+	CurrentTitle      string `json:"current_title,omitempty"`
+	CurrentPriceCents int64  `json:"current_price_cents,omitempty"`
+	CurrentStatus     string `json:"current_status,omitempty"`
+	CoverURL          string `json:"cover_url,omitempty"`
+	Available         bool   `json:"available"`
 }
 
 func favoriteStatusOf(item Favorite, product *catalog.Product, found bool) (status, label string) {
@@ -84,6 +84,12 @@ func (h *Handler) viewsForFavorites(c *gin.Context, items []Favorite) []favorite
 	return views
 }
 
+func escapeLikePattern(value string) string {
+	value = strings.ReplaceAll(value, "\\\\", "\\\\\\\\")
+	value = strings.ReplaceAll(value, "%", "\\\\%")
+	return strings.ReplaceAll(value, "_", "\\\\_")
+}
+
 func (h *Handler) listFavorites(c *gin.Context) {
 	user, _ := auth.CurrentUser(c)
 	page := positiveInt(c.Query("page"), 1)
@@ -92,9 +98,9 @@ func (h *Handler) listFavorites(c *gin.Context) {
 	if folder := strings.TrimSpace(c.Query("folder")); folder != "" {
 		query = query.Where("folder = ?", folder)
 	}
-	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
+	if keyword := escapeLikePattern(strings.TrimSpace(c.Query("keyword"))); keyword != "" {
 		like := "%" + keyword + "%"
-		query = query.Where("snapshot_title LIKE ? OR snapshot_ip_name LIKE ? OR snapshot_category LIKE ?", like, like, like)
+		query = query.Where(`snapshot_title LIKE ? ESCAPE '\\' OR snapshot_ip_name LIKE ? ESCAPE '\\' OR snapshot_category LIKE ? ESCAPE '\\'`, like, like, like)
 	}
 	statusFilter := strings.ToUpper(strings.TrimSpace(c.Query("status")))
 	var items []Favorite
@@ -187,10 +193,12 @@ func (h *Handler) addFavorite(c *gin.Context) {
 		SnapshotStatus: product.Status, SnapshotCategory: product.Category, SnapshotIPName: product.IPName,
 	}
 	var existing Favorite
-	if err := h.db.WithContext(c.Request.Context()).Where("user_id = ? AND product_id = ?", user.ID, product.ID).First(&existing).Error; err == nil {
+	err = h.db.WithContext(c.Request.Context()).Where("user_id = ? AND product_id = ?", user.ID, product.ID).First(&existing).Error
+	if err == nil {
 		abort(c, http.StatusConflict, "ALREADY_FAVORITED", "该商品已在收藏中")
 		return
-	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		abort(c, http.StatusInternalServerError, "INTERNAL_ERROR", "收藏失败")
 		return
 	}

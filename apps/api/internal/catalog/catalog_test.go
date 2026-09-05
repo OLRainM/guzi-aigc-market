@@ -25,6 +25,24 @@ func TestValidateRequest(t *testing.T) {
 	}
 }
 
+func TestEscapeLikePattern(t *testing.T) {
+	tests := []struct {
+		name, input, want string
+	}{
+		{"plain", "模型", "模型"},
+		{"percent", "100%", `100\%`},
+		{"underscore", "a_b", `a\_b`},
+		{"backslash", `a\b`, `a\\b`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := escapeLikePattern(test.input); got != test.want {
+				t.Fatalf("escapeLikePattern(%q) = %q, want %q", test.input, got, test.want)
+			}
+		})
+	}
+}
+
 func TestValidTransition(t *testing.T) {
 	tests := []struct {
 		from, to string

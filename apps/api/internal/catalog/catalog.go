@@ -142,9 +142,9 @@ func (h *Handler) list(c *gin.Context) {
 	page := positiveInt(c.Query("page"), 1)
 	pageSize := min(positiveInt(c.Query("page_size"), 20), 100)
 	query := h.db.WithContext(c.Request.Context()).Model(&Product{}).Where("status = ?", StatusPublished)
-	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
+	if keyword := escapeLikePattern(strings.TrimSpace(c.Query("keyword"))); keyword != "" {
 		like := "%" + keyword + "%"
-		query = query.Where("title LIKE ? OR description LIKE ?", like, like)
+		query = query.Where(`title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'`, like, like)
 	}
 	for key, column := range map[string]string{"ip_name": "ip_name", "category": "category", "condition": "`condition`", "transaction_type": "transaction_type"} {
 		if value := strings.TrimSpace(c.Query(key)); value != "" {
@@ -510,6 +510,12 @@ func positiveInt(value string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func escapeLikePattern(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\`+`\`)
+	value = strings.ReplaceAll(value, "%", `\`+"%")
+	return strings.ReplaceAll(value, "_", `\`+"_")
 }
 
 func (h *Handler) currentUser(c *gin.Context) (*auth.User, bool) {

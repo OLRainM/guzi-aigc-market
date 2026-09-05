@@ -62,6 +62,11 @@ func main() {
 	if jwtSecret == "" && appEnv == "development" {
 		jwtSecret = "local-development-secret-change-before-deployment"
 	}
+	workerToken := os.Getenv("WORKER_INTERNAL_TOKEN")
+	if appEnv == "production" && (len(jwtSecret) < 32 || workerToken == "") {
+		logger.Error("required production secrets are missing")
+		os.Exit(1)
+	}
 	port := env("API_PORT", "8080")
 	db, err := gorm.Open(mysql.Open(env("MYSQL_DSN", "root:root@tcp(localhost:3306)/aigc_platform?charset=utf8mb4&parseTime=True&loc=Local")), &gorm.Config{TranslateError: true})
 	if err != nil {
