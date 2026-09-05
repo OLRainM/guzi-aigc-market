@@ -1,6 +1,7 @@
 package generation
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -27,11 +28,18 @@ func New(db *gorm.DB, assets *asset.Service, rdb *redis.Client, timeout time.Dur
 	if err != nil {
 		return nil, err
 	}
-	return &Handler{service: service, workerToken: os.Getenv("WORKER_INTERNAL_TOKEN")}, nil
+	workerToken := os.Getenv("WORKER_INTERNAL_TOKEN")
+	service.optimizer = NewHTTPPromptOptimizer(envOr("WORKER_INTERNAL_URL", "http://localhost:8000"), workerToken)
+	return &Handler{service: service, workerToken: workerToken}, nil
+}
+
+func (h *Handler) Service() *Service {
+	return h.service
 }
 
 func (h *Handler) RegisterRoutes(group *gin.RouterGroup, authenticate gin.HandlerFunc) {
 	protected := group.Group("/generation-jobs", authenticate)
+	protected.POST("/prompt-preview", h.previewPrompt)
 	protected.POST("", h.create)
 	protected.GET("", h.list)
 	protected.GET("/:id", h.get)
@@ -52,6 +60,33 @@ func (h *Handler) StartDispatcher() {
 
 func (h *Handler) StartTimeoutWatcher() {
 	h.service.StartTimeoutWatcher()
+}
+
+func (h *Handler) previewPrompt(c *gin.Context) {
+	user, _ := auth.CurrentUser(c)
+	var req PromptPreviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		abort(c, http.StatusBadRequest, "INVALID_ARGUMENT", "请求格式无效")
+		return
+	}
+	preview, err := h.service.PreviewPrompt(c.Request.Context(), user.ID, req)
+	if err != nil {
+		if errors.Is(err, errInvalidArgument) {
+			abort(c, http.StatusBadRequest, "INVALID_ARGUMENT", "Prompt 或商品类型不符合要求")
+			return
+		}
+		abort(c, http.StatusServiceUnavailable, "PROMPT_OPTIMIZER_UNAVAILABLE", "Prompt 优化服务暂不可用")
+		return
+	}
+	var structured, ragContext map[string]any
+	_ = json.Unmarshal(preview.StructuredPrompt, &structured)
+	_ = json.Unmarshal(preview.RAGContext, &ragContext)
+	c.JSON(http.StatusCreated, PromptPreviewResponse{
+		ID: preview.ID, RawPrompt: preview.RawPrompt, ProductType: preview.ProductType,
+		OptimizedPrompt: preview.OptimizedPrompt, StructuredPrompt: structured, RAGContext: ragContext,
+		RAGVersion: preview.RAGVersion, PromptTemplateVersion: preview.PromptTemplateVersion,
+		Source: preview.Source, ExpiresAt: preview.ExpiresAt,
+	})
 }
 
 func (h *Handler) create(c *gin.Context) {
@@ -174,15 +209,24 @@ func (h *Handler) fail(c *gin.Context) {
 }
 
 func (h *Handler) complete(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, asset.MaxModelBytes+512)
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		abort(c, http.StatusBadRequest, "INVALID_ARGUMENT", "缺少生成结果文件")
 		return
 	}
 	defer file.Close()
-	body, err := io.ReadAll(file)
+	if header.Size > asset.MaxModelBytes {
+		abort(c, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", "生成结果超过 20 MB")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(file, asset.MaxModelBytes+1))
 	if err != nil {
 		abort(c, http.StatusBadRequest, "INVALID_ARGUMENT", "读取生成结果失败")
+		return
+	}
+	if int64(len(body)) > asset.MaxModelBytes {
+		abort(c, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", "生成结果超过 20 MB")
 		return
 	}
 	attempt := positiveInt(c.PostForm("attempt"), 0)
@@ -194,7 +238,11 @@ func (h *Handler) complete(c *gin.Context) {
 		Attempt: attempt, ProviderJobID: c.PostForm("provider_job_id"), Filename: header.Filename, MIMEType: header.Header.Get("Content-Type"), Body: body,
 	})
 	if err != nil {
-		if errors.Is(err, asset.ErrInvalidFile) || errors.Is(err, asset.ErrUnsupportedType) || errors.Is(err, asset.ErrKindMismatch) || errors.Is(err, asset.ErrFileTooLarge) {
+		if errors.Is(err, asset.ErrFileTooLarge) {
+			abort(c, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", "生成结果超过 20 MB")
+			return
+		}
+		if errors.Is(err, asset.ErrInvalidFile) || errors.Is(err, asset.ErrUnsupportedType) || errors.Is(err, asset.ErrKindMismatch) {
 			abort(c, http.StatusBadRequest, "INVALID_ARGUMENT", "生成结果不是有效的 GLB")
 			return
 		}
@@ -255,6 +303,13 @@ func positiveInt(value string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func envOr(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func abort(c *gin.Context, status int, code, message string) {

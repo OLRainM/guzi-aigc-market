@@ -5,6 +5,7 @@ from uuid import uuid4
 from contracts import GenerationJobMessage
 from processor import JobProcessor
 from promptopt.optimizer import OptimizedPrompt
+from providers.base import ProviderOutput
 from providers.mock import MockProvider, minimal_glb
 
 
@@ -87,6 +88,28 @@ class JobProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "FAILED")
         self.assertEqual(api.calls[-1][0], "fail")
         self.assertEqual(api.calls[-1][1]["error_code"], "INVALID_REQUEST")
+
+    async def test_rejects_empty_glb(self) -> None:
+        class EmptyOutputProvider(MockProvider):
+            async def fetch_outputs(self, provider_job_id: str):
+                return [
+                    ProviderOutput(
+                        output_type="MODEL",
+                        format="glb",
+                        uri="mock://assets/empty.glb",
+                        mime_type="model/gltf-binary",
+                        metadata={"provider": "mock"},
+                        content=b"",
+                    )
+                ]
+
+        api = FakeAPI()
+        processor = JobProcessor(api, EmptyOutputProvider(), FakeOptimizer())
+        result = await processor.process(sample_message())
+        self.assertEqual(result, "FAILED")
+        self.assertEqual(api.calls[-1][0], "fail")
+        self.assertEqual(api.calls[-1][1]["error_code"], "OUTPUT_INVALID")
+        self.assertIsNone(api.completed)
 
 
 if __name__ == "__main__":

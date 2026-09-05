@@ -12,6 +12,11 @@ export type Product = {
 };
 export type ProductList = { items: Product[]; page: number; page_size: number; total: number };
 export type GenerationOutput = { id: string; output_type: string; format: string; mime_type: string; size_bytes: number; content_url?: string };
+export type PromptPreview = {
+  id: string; raw_prompt: string; product_type: string; optimized_prompt: string;
+  structured_prompt?: Record<string, unknown>; rag_context?: Record<string, unknown>;
+  rag_version?: string; template_version?: string; source: string; expires_at: string;
+};
 export type GenerationJob = {
   id: string; status: string; stage: string; progress: number; raw_prompt: string;
   optimized_prompt?: string | null; product_type?: string; provider: string;
@@ -43,8 +48,17 @@ export type ActivityItem = { id: string; action: string; target_type?: string; t
 export type ProfilePayload = {
   user: User; profile: Profile; preferences: Preferences;
   sandbox: { cash_cents: number; generation: number; reset_count: number };
-  stats: { favorites: number; unread_notifications: number; addresses: number };
-};
+  stats: { favorites: number; unread_notifications: number; addresses: number; buy_orders?: number; sell_orders?: number };
+  };
+  export type TradeOrderEvent = { id: string; from_status?: string; to_status: string; actor_role: string; note?: string; created_at: string };
+  export type TradeOrder = {
+  id: string; buyer_id: string; seller_id: string; product_id: string; address_id: string;
+  quantity: number; unit_price_cents: number; amount_cents: number; status: string;
+  product_title: string; cover_url?: string; recipient: string; phone: string; address_text: string;
+  tracking_no?: string; cancel_reason?: string; paid_at?: string | null; canceled_at?: string | null;
+  shipped_at?: string | null; completed_at?: string | null; created_at: string; events?: TradeOrderEvent[];
+  };
+  export type TradeOrderList = { items: TradeOrder[]; page: number; page_size: number; total: number; role: string };
 export type SandboxHolding = {
   id: string; product_id: string; quantity: number; avg_cost_cents: number; title: string;
   current_price_cents: number; market_value_cents: number; unrealized_cents: number;
@@ -69,7 +83,14 @@ export function activityLabel(action: string) {
   return ({
     VIEW_PRODUCT: '浏览商品', FAVORITE_ADD: '加入收藏', FAVORITE_REMOVE: '取消收藏',
     PROFILE_UPDATE: '更新资料', ADDRESS_SAVE: '保存地址', SANDBOX_TRADE: '沙盒交易', SANDBOX_RESET: '重置沙盒',
+    ORDER_CREATE: '创建订单', ORDER_PAY: '模拟支付', ORDER_CANCEL: '取消订单', ORDER_SHIP: '模拟发货', ORDER_CONFIRM: '确认收货',
   } as Record<string, string>)[action] ?? action;
+}
+
+export function orderStatusLabel(status: string) {
+  return ({
+    PENDING_PAYMENT: '待支付', PAID: '已支付待发货', SHIPPED: '已发货', COMPLETED: '已完成', CANCELED: '已取消',
+  } as Record<string, string>)[status] ?? status;
 }
 
 export function newIdempotencyKey() {

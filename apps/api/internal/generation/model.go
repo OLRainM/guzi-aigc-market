@@ -39,6 +39,24 @@ type GenerationJob struct {
 
 func (GenerationJob) TableName() string { return "generation_jobs" }
 
+type PromptPreview struct {
+	ID                    string          `gorm:"type:char(36);primaryKey" json:"id"`
+	UserID                string          `gorm:"type:char(36);not null;index" json:"-"`
+	RawPrompt             string          `gorm:"type:text;not null" json:"raw_prompt"`
+	ProductType           string          `gorm:"size:64;not null" json:"product_type"`
+	OptimizedPrompt       string          `gorm:"type:text;not null" json:"optimized_prompt"`
+	StructuredPrompt      json.RawMessage `gorm:"type:json" json:"structured_prompt,omitempty"`
+	RAGContext            json.RawMessage `gorm:"column:rag_context;type:json" json:"rag_context,omitempty"`
+	RAGVersion            string          `gorm:"column:rag_version;size:64" json:"rag_version,omitempty"`
+	PromptTemplateVersion string          `gorm:"size:64" json:"template_version,omitempty"`
+	Source                string          `gorm:"size:32;not null" json:"source"`
+	ExpiresAt             time.Time       `gorm:"not null;index" json:"expires_at"`
+	ConsumedAt            *time.Time      `json:"-"`
+	CreatedAt             time.Time       `json:"created_at"`
+}
+
+func (PromptPreview) TableName() string { return "generation_prompt_previews" }
+
 type GenerationOutput struct {
 	ID         string          `gorm:"type:char(36);primaryKey" json:"id"`
 	JobID      string          `gorm:"type:char(36);not null;index" json:"job_id"`

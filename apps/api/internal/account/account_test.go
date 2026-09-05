@@ -41,7 +41,7 @@ func setupAccountServer(t *testing.T) (*gin.Engine, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalogHandler, err := catalog.New(db, assets)
+	catalogHandler, err := catalog.New(db, assets, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,5 +245,187 @@ func TestSandboxTradeAndReset(t *testing.T) {
 	}
 	if !bytes.Contains(reset.Body.Bytes(), []byte(`"status":"FILLED"`)) {
 		t.Fatalf("reset should keep trade history: %s", reset.Body.String())
+	}
+}
+
+func doJSONHeader(router http.Handler, method, path, token, idempotencyKey string, payload any) *httptest.ResponseRecorder {
+	var reader *bytes.Reader
+	if payload != nil {
+		body, _ := json.Marshal(payload)
+		reader = bytes.NewReader(body)
+	} else {
+		reader = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
+func createAddress(t *testing.T, router http.Handler, token string) string {
+	t.Helper()
+	rec := doJSON(router, http.MethodPost, "/api/v1/me/addresses", token, map[string]any{
+		"recipient": "测试收件人", "phone": "13800138000", "province": "上海", "city": "上海", "detail": "测试路 1 号", "is_default": true,
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create address = %d %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Address struct {
+			ID string `json:"id"`
+		} `json:"address"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body.Address.ID
+}
+
+func TestSimulatedOrderLifecycle(t *testing.T) {
+	router, db := setupAccountServer(t)
+	seller := register(t, router, "seller03")
+	buyer := register(t, router, "buyer03")
+	productID := createPublishedProduct(t, router, db, seller, "可下单手办", 25000)
+	addressID := createAddress(t, router, buyer)
+	key := "11111111-1111-1111-1111-111111111111"
+
+	selfBuy := doJSONHeader(router, http.MethodPost, "/api/v1/orders", seller, key, map[string]any{
+		"product_id": productID, "address_id": addressID, "quantity": 1,
+	})
+	if selfBuy.Code != http.StatusConflict {
+		t.Fatalf("self trade order = %d %s", selfBuy.Code, selfBuy.Body.String())
+	}
+
+	created := doJSONHeader(router, http.MethodPost, "/api/v1/orders", buyer, key, map[string]any{
+		"product_id": productID, "address_id": addressID, "quantity": 2,
+	})
+	if created.Code != http.StatusCreated || !bytes.Contains(created.Body.Bytes(), []byte(`"status":"PENDING_PAYMENT"`)) {
+		t.Fatalf("create order = %d %s", created.Code, created.Body.String())
+	}
+	replay := doJSONHeader(router, http.MethodPost, "/api/v1/orders", buyer, key, map[string]any{
+		"product_id": productID, "address_id": addressID, "quantity": 2,
+	})
+	if replay.Code != http.StatusOK {
+		t.Fatalf("idempotent replay = %d %s", replay.Code, replay.Body.String())
+	}
+	conflict := doJSONHeader(router, http.MethodPost, "/api/v1/orders", buyer, key, map[string]any{
+		"product_id": productID, "address_id": addressID, "quantity": 1,
+	})
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("idempotency conflict = %d %s", conflict.Code, conflict.Body.String())
+	}
+
+	var createdBody struct {
+		Order struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"order"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
+		t.Fatal(err)
+	}
+	var product catalog.Product
+	if err := db.First(&product, "id = ?", productID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if product.Stock != 6 {
+		t.Fatalf("stock after create = %d", product.Stock)
+	}
+
+	overStock := doJSONHeader(router, http.MethodPost, "/api/v1/orders", buyer, "22222222-2222-2222-2222-222222222222", map[string]any{
+		"product_id": productID, "address_id": addressID, "quantity": 9,
+	})
+	if overStock.Code != http.StatusConflict {
+		t.Fatalf("over stock = %d %s", overStock.Code, overStock.Body.String())
+	}
+
+	pay := doJSON(router, http.MethodPost, "/api/v1/orders/"+createdBody.Order.ID+"/pay", buyer, map[string]any{})
+	if pay.Code != http.StatusOK || !bytes.Contains(pay.Body.Bytes(), []byte(`"status":"PAID"`)) {
+		t.Fatalf("pay = %d %s", pay.Code, pay.Body.String())
+	}
+	snapshot := doJSON(router, http.MethodGet, "/api/v1/sandbox", buyer, nil)
+	if snapshot.Code != http.StatusOK || !bytes.Contains(snapshot.Body.Bytes(), []byte(`"cash_cents":9950000`)) {
+		t.Fatalf("buyer cash after pay = %d %s", snapshot.Code, snapshot.Body.String())
+	}
+
+	buyerShip := doJSON(router, http.MethodPost, "/api/v1/orders/"+createdBody.Order.ID+"/ship", buyer, map[string]any{"tracking_no": "SF123"})
+	if buyerShip.Code != http.StatusForbidden {
+		t.Fatalf("buyer ship = %d %s", buyerShip.Code, buyerShip.Body.String())
+	}
+	ship := doJSON(router, http.MethodPost, "/api/v1/orders/"+createdBody.Order.ID+"/ship", seller, map[string]any{"tracking_no": "SF123456"})
+	if ship.Code != http.StatusOK || !bytes.Contains(ship.Body.Bytes(), []byte(`"status":"SHIPPED"`)) {
+		t.Fatalf("ship = %d %s", ship.Code, ship.Body.String())
+	}
+	confirm := doJSON(router, http.MethodPost, "/api/v1/orders/"+createdBody.Order.ID+"/confirm", buyer, map[string]any{})
+	if confirm.Code != http.StatusOK || !bytes.Contains(confirm.Body.Bytes(), []byte(`"status":"COMPLETED"`)) {
+		t.Fatalf("confirm = %d %s", confirm.Code, confirm.Body.String())
+	}
+	sellerCash := doJSON(router, http.MethodGet, "/api/v1/sandbox", seller, nil)
+	if sellerCash.Code != http.StatusOK || !bytes.Contains(sellerCash.Body.Bytes(), []byte(`"cash_cents":10050000`)) {
+		t.Fatalf("seller cash after confirm = %d %s", sellerCash.Code, sellerCash.Body.String())
+	}
+}
+
+func TestSimulatedOrderCancelRestoresStockAndRefund(t *testing.T) {
+	router, db := setupAccountServer(t)
+	seller := register(t, router, "seller04")
+	buyer := register(t, router, "buyer04")
+	productID := createPublishedProduct(t, router, db, seller, "可取消手办", 30000)
+	addressID := createAddress(t, router, buyer)
+
+	pending := doJSONHeader(router, http.MethodPost, "/api/v1/orders", buyer, "33333333-3333-3333-3333-333333333333", map[string]any{
+		"product_id": productID, "address_id": addressID, "quantity": 3,
+	})
+	if pending.Code != http.StatusCreated {
+		t.Fatalf("pending order = %d %s", pending.Code, pending.Body.String())
+	}
+	var pendingBody struct {
+		Order struct {
+			ID string `json:"id"`
+		} `json:"order"`
+	}
+	if err := json.Unmarshal(pending.Body.Bytes(), &pendingBody); err != nil {
+		t.Fatal(err)
+	}
+	cancelPending := doJSON(router, http.MethodPost, "/api/v1/orders/"+pendingBody.Order.ID+"/cancel", buyer, map[string]any{"reason": "不想买了"})
+	if cancelPending.Code != http.StatusOK || !bytes.Contains(cancelPending.Body.Bytes(), []byte(`"status":"CANCELED"`)) {
+		t.Fatalf("cancel pending = %d %s", cancelPending.Code, cancelPending.Body.String())
+	}
+	var product catalog.Product
+	if err := db.First(&product, "id = ?", productID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if product.Stock != 8 {
+		t.Fatalf("stock after cancel pending = %d", product.Stock)
+	}
+
+	paid := doJSONHeader(router, http.MethodPost, "/api/v1/orders", buyer, "44444444-4444-4444-4444-444444444444", map[string]any{
+		"product_id": productID, "address_id": addressID, "quantity": 1,
+	})
+	var paidBody struct {
+		Order struct {
+			ID string `json:"id"`
+		} `json:"order"`
+	}
+	if err := json.Unmarshal(paid.Body.Bytes(), &paidBody); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doJSON(router, http.MethodPost, "/api/v1/orders/"+paidBody.Order.ID+"/pay", buyer, map[string]any{}); rec.Code != http.StatusOK {
+		t.Fatalf("pay before seller cancel = %d %s", rec.Code, rec.Body.String())
+	}
+	sellerCancel := doJSON(router, http.MethodPost, "/api/v1/orders/"+paidBody.Order.ID+"/cancel", seller, map[string]any{"reason": "缺货"})
+	if sellerCancel.Code != http.StatusOK || !bytes.Contains(sellerCancel.Body.Bytes(), []byte(`"status":"CANCELED"`)) {
+		t.Fatalf("seller cancel paid = %d %s", sellerCancel.Code, sellerCancel.Body.String())
+	}
+	snapshot := doJSON(router, http.MethodGet, "/api/v1/sandbox", buyer, nil)
+	if snapshot.Code != http.StatusOK || !bytes.Contains(snapshot.Body.Bytes(), []byte(`"cash_cents":10000000`)) {
+		t.Fatalf("refund after seller cancel = %d %s", snapshot.Code, snapshot.Body.String())
 	}
 }

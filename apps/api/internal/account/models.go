@@ -16,10 +16,25 @@ const (
 	ActivityAddressSave       = "ADDRESS_SAVE"
 	ActivitySandboxTrade      = "SANDBOX_TRADE"
 	ActivitySandboxReset      = "SANDBOX_RESET"
+	ActivityOrderCreate       = "ORDER_CREATE"
+	ActivityOrderPay          = "ORDER_PAY"
+	ActivityOrderCancel       = "ORDER_CANCEL"
+	ActivityOrderShip         = "ORDER_SHIP"
+	ActivityOrderConfirm      = "ORDER_CONFIRM"
 	NotifyFavoriteUpdate      = "FAVORITE_UPDATE"
 	NotifyFavoriteInvalid     = "FAVORITE_INVALID"
 	NotifyTradeFilled         = "TRADE_FILLED"
+	NotifyOrderCreated        = "ORDER_CREATED"
+	NotifyOrderPaid           = "ORDER_PAID"
+	NotifyOrderCanceled       = "ORDER_CANCELED"
+	NotifyOrderShipped        = "ORDER_SHIPPED"
+	NotifyOrderCompleted      = "ORDER_COMPLETED"
 	NotifySystem              = "SYSTEM"
+	OrderPendingPayment       = "PENDING_PAYMENT"
+	OrderPaid                 = "PAID"
+	OrderShipped              = "SHIPPED"
+	OrderCompleted            = "COMPLETED"
+	OrderCanceled             = "CANCELED"
 	SideBuy                   = "BUY"
 	SideSell                  = "SELL"
 	OrderFilled               = "FILLED"
@@ -149,3 +164,45 @@ type SandboxOrder struct {
 }
 
 func (SandboxOrder) TableName() string { return "sandbox_orders" }
+
+type Order struct {
+	ID             string     `gorm:"type:char(36);primaryKey" json:"id"`
+	BuyerID        string     `gorm:"type:char(36);not null;uniqueIndex:uq_orders_buyer_idempotency,priority:1;index" json:"buyer_id"`
+	SellerID       string     `gorm:"type:char(36);not null;index" json:"seller_id"`
+	ProductID      string     `gorm:"type:char(36);not null;index" json:"product_id"`
+	AddressID      string     `gorm:"type:char(36);not null" json:"address_id"`
+	IdempotencyKey string     `gorm:"type:char(36);not null;uniqueIndex:uq_orders_buyer_idempotency,priority:2" json:"-"`
+	RequestHash    string     `gorm:"size:128;not null" json:"-"`
+	Quantity       int        `gorm:"not null" json:"quantity"`
+	UnitPriceCents int64      `gorm:"not null" json:"unit_price_cents"`
+	AmountCents    int64      `gorm:"not null" json:"amount_cents"`
+	Status         string     `gorm:"size:24;not null;index" json:"status"`
+	ProductTitle   string     `gorm:"size:120;not null" json:"product_title"`
+	CoverURL       string     `gorm:"size:255" json:"cover_url,omitempty"`
+	Recipient      string     `gorm:"size:64;not null" json:"recipient"`
+	Phone          string     `gorm:"size:32;not null" json:"phone"`
+	AddressText    string     `gorm:"size:255;not null" json:"address_text"`
+	TrackingNo     string     `gorm:"size:64" json:"tracking_no,omitempty"`
+	CancelReason   string     `gorm:"size:120" json:"cancel_reason,omitempty"`
+	PaidAt         *time.Time `json:"paid_at,omitempty"`
+	CanceledAt     *time.Time `json:"canceled_at,omitempty"`
+	ShippedAt      *time.Time `json:"shipped_at,omitempty"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+func (Order) TableName() string { return "trade_orders" }
+
+type OrderEvent struct {
+	ID         string    `gorm:"type:char(36);primaryKey" json:"id"`
+	OrderID    string    `gorm:"type:char(36);not null;index" json:"order_id"`
+	FromStatus string    `gorm:"size:24" json:"from_status,omitempty"`
+	ToStatus   string    `gorm:"size:24;not null" json:"to_status"`
+	ActorID    string    `gorm:"type:char(36);not null" json:"actor_id"`
+	ActorRole  string    `gorm:"size:16;not null" json:"actor_role"`
+	Note       string    `gorm:"size:240" json:"note,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func (OrderEvent) TableName() string { return "trade_order_events" }

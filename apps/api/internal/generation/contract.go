@@ -9,12 +9,30 @@ const (
 	JobCreatedEvent   = "generation.job.created"
 )
 
+type PromptPreviewRequest struct {
+	Prompt      string `json:"prompt"`
+	ProductType string `json:"product_type"`
+}
+
+type PromptPreviewResponse struct {
+	ID                    string         `json:"id"`
+	RawPrompt             string         `json:"raw_prompt"`
+	ProductType           string         `json:"product_type"`
+	OptimizedPrompt       string         `json:"optimized_prompt"`
+	StructuredPrompt      map[string]any `json:"structured_prompt,omitempty"`
+	RAGContext            map[string]any `json:"rag_context,omitempty"`
+	RAGVersion            string         `json:"rag_version,omitempty"`
+	PromptTemplateVersion string         `json:"template_version,omitempty"`
+	Source                string         `json:"source"`
+	ExpiresAt             time.Time      `json:"expires_at"`
+}
+
 type CreateJobRequest struct {
-	Prompt             string         `json:"prompt"`
-	ProductType        string         `json:"product_type"`
-	Provider           string         `json:"provider"`
-	Parameters         map[string]any `json:"parameters,omitempty"`
-	CopyrightConfirmed bool           `json:"copyright_confirmed"`
+	PromptPreviewID   string         `json:"prompt_preview_id"`
+	FinalPrompt       string         `json:"final_prompt"`
+	Provider          string         `json:"provider"`
+	Parameters        map[string]any `json:"parameters,omitempty"`
+	CopyrightConfirmed bool          `json:"copyright_confirmed"`
 }
 
 type JobError struct {

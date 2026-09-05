@@ -12,6 +12,7 @@ import (
 
 	"aigc-3d-platform/apps/api/internal/asset"
 	"aigc-3d-platform/apps/api/internal/auth"
+	"aigc-3d-platform/apps/api/internal/generation"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -61,6 +62,7 @@ func (ProductAsset) TableName() string { return "product_assets" }
 type Handler struct {
 	db          *gorm.DB
 	assets      *asset.Service
+	jobs        *generation.Service
 	resolveUser func(*gin.Context) (*auth.User, bool)
 }
 
@@ -81,13 +83,14 @@ type productRequest struct {
 	ShippingOrigin  string `json:"shipping_origin"`
 	Stock           int    `json:"stock"`
 	PreorderNote    string `json:"preorder_note"`
+	GenerationJobID string `json:"generation_job_id"`
 }
 
-func New(db *gorm.DB, assets *asset.Service) (*Handler, error) {
+func New(db *gorm.DB, assets *asset.Service, jobs *generation.Service) (*Handler, error) {
 	if err := db.AutoMigrate(&Product{}, &ProductAsset{}); err != nil {
 		return nil, err
 	}
-	return &Handler{db: db, assets: assets}, nil
+	return &Handler{db: db, assets: assets, jobs: jobs}, nil
 }
 
 func (h *Handler) RegisterRoutes(group *gin.RouterGroup, authenticate gin.HandlerFunc, resolveUser func(*gin.Context) (*auth.User, bool)) {
@@ -124,6 +127,13 @@ func (h *Handler) create(c *gin.Context) {
 	if err := h.db.WithContext(c.Request.Context()).Create(&product).Error; err != nil {
 		abort(c, http.StatusInternalServerError, "INTERNAL_ERROR", "创建商品失败")
 		return
+	}
+	if jobID := strings.TrimSpace(req.GenerationJobID); jobID != "" {
+		if err := h.attachGenerationModel(c, &product, jobID); err != nil {
+			_ = h.db.WithContext(c.Request.Context()).Delete(&Product{}, "id = ?", product.ID).Error
+			abortAttachError(c, err)
+			return
+		}
 	}
 	c.JSON(http.StatusCreated, gin.H{"product": h.view(c, product)})
 }
@@ -249,6 +259,10 @@ func (h *Handler) delete(c *gin.Context) {
 func (h *Handler) publish(c *gin.Context) {
 	product, ok := h.ownedProduct(c)
 	if !ok {
+		return
+	}
+	if product.Status == StatusOffShelf {
+		h.transitionProduct(c, product, StatusOffShelf, StatusPublished)
 		return
 	}
 	if count, err := h.assetCount(c, product.ID, asset.KindImage); err != nil {
@@ -382,11 +396,8 @@ func (h *Handler) getContent(c *gin.Context) {
 		return
 	}
 	if product.Status != StatusPublished {
-		user, ok := h.currentUser(c)
-		if !ok || product.SellerID != user.ID {
-			abort(c, http.StatusForbidden, "FORBIDDEN", "不能访问未发布商品的资产")
-			return
-		}
+		abort(c, http.StatusNotFound, "PRODUCT_NOT_FOUND", "商品不存在")
+		return
 	}
 	var link ProductAsset
 	if err := h.db.WithContext(c.Request.Context()).First(&link, "product_id = ? AND asset_id = ?", product.ID, c.Param("asset_id")).Error; err != nil {
@@ -406,6 +417,46 @@ func (h *Handler) getContent(c *gin.Context) {
 	c.Header("Content-Disposition", "inline; filename=\""+stored.OriginalName+"\"")
 	c.Status(http.StatusOK)
 	_, _ = io.Copy(c.Writer, body)
+}
+
+func (h *Handler) attachGenerationModel(c *gin.Context, product *Product, jobID string) error {
+	if h.jobs == nil {
+		return generation.ErrJobNotFound
+	}
+	source, err := h.jobs.ReadyModel(c.Request.Context(), product.SellerID, jobID)
+	if err != nil {
+		return err
+	}
+	copied, err := h.assets.Copy(c.Request.Context(), source.ID, product.SellerID, product.ID)
+	if err != nil {
+		return err
+	}
+	link := ProductAsset{ProductID: product.ID, AssetID: copied.ID, Kind: asset.KindModel, SortOrder: 0}
+	if err := h.db.WithContext(c.Request.Context()).Create(&link).Error; err != nil {
+		_ = h.assets.Delete(c.Request.Context(), copied.ID)
+		return err
+	}
+	if err := h.db.WithContext(c.Request.Context()).Model(product).Update("model_asset_id", copied.ID).Error; err != nil {
+		_ = h.removeAsset(c, product, copied.ID)
+		return err
+	}
+	product.ModelAssetID = &copied.ID
+	return nil
+}
+
+func abortAttachError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, generation.ErrJobNotFound), errors.Is(err, gorm.ErrRecordNotFound):
+		abort(c, http.StatusNotFound, "GENERATION_JOB_NOT_FOUND", "生成任务不存在或没有可发布的模型")
+	case errors.Is(err, generation.ErrOutputNotReady):
+		abort(c, http.StatusConflict, "GENERATION_OUTPUT_NOT_READY", "生成任务尚未完成，不能带入发布")
+	case errors.Is(err, asset.ErrInvalidFile), errors.Is(err, asset.ErrUnsupportedType), errors.Is(err, asset.ErrKindMismatch):
+		abort(c, http.StatusBadRequest, "INVALID_FILE", "生成结果不是可发布的 GLB")
+	case errors.Is(err, asset.ErrFileTooLarge):
+		abort(c, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", "文件超过大小限制")
+	default:
+		abort(c, http.StatusInternalServerError, "INTERNAL_ERROR", "带入生成模型失败")
+	}
 }
 
 func (h *Handler) ownedProduct(c *gin.Context) (*Product, bool) {
@@ -448,7 +499,9 @@ func normalizedTransactionType(value string) string {
 }
 
 func validTransition(from, to string) bool {
-	return (from == StatusDraft && to == StatusPublished) || (from == StatusPublished && to == StatusOffShelf)
+	return (from == StatusDraft && to == StatusPublished) ||
+		(from == StatusPublished && to == StatusOffShelf) ||
+		(from == StatusOffShelf && to == StatusPublished)
 }
 
 func positiveInt(value string, fallback int) int {

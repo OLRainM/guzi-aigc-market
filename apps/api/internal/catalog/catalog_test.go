@@ -34,7 +34,7 @@ func TestValidTransition(t *testing.T) {
 		{StatusPublished, StatusOffShelf, true},
 		{StatusDraft, StatusOffShelf, false},
 		{StatusPublished, StatusDraft, false},
-		{StatusOffShelf, StatusPublished, false},
+		{StatusOffShelf, StatusPublished, true},
 	}
 	for _, test := range tests {
 		if got := validTransition(test.from, test.to); got != test.valid {

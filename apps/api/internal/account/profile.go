@@ -51,14 +51,16 @@ func (h *Handler) getProfile(c *gin.Context) {
 	profile := h.ensureProfile(c, user)
 	pref := h.ensurePreference(c, user.ID)
 	account := h.ensureSandbox(c, user.ID)
-	var favoriteCount, unreadCount, addressCount int64
+	var favoriteCount, unreadCount, addressCount, buyOrderCount, sellOrderCount int64
 	h.db.WithContext(c.Request.Context()).Model(&Favorite{}).Where("user_id = ?", user.ID).Count(&favoriteCount)
 	h.db.WithContext(c.Request.Context()).Model(&Notification{}).Where("user_id = ? AND read_at IS NULL", user.ID).Count(&unreadCount)
 	h.db.WithContext(c.Request.Context()).Model(&Address{}).Where("user_id = ?", user.ID).Count(&addressCount)
+	h.db.WithContext(c.Request.Context()).Model(&Order{}).Where("buyer_id = ?", user.ID).Count(&buyOrderCount)
+	h.db.WithContext(c.Request.Context()).Model(&Order{}).Where("seller_id = ?", user.ID).Count(&sellOrderCount)
 	c.JSON(http.StatusOK, gin.H{
 		"user": user, "profile": profile, "preferences": pref,
 		"sandbox": gin.H{"cash_cents": account.CashCents, "generation": account.Generation, "reset_count": account.ResetCount},
-		"stats": gin.H{"favorites": favoriteCount, "unread_notifications": unreadCount, "addresses": addressCount},
+		"stats": gin.H{"favorites": favoriteCount, "unread_notifications": unreadCount, "addresses": addressCount, "buy_orders": buyOrderCount, "sell_orders": sellOrderCount},
 	})
 }
 

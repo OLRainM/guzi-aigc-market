@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -54,6 +55,30 @@ func (s *Service) Get(ctx context.Context, userID, jobID string) (*GenerationJob
 		return nil, nil, err
 	}
 	return job, outputs, nil
+}
+
+func (s *Service) ReadyModel(ctx context.Context, userID, jobID string) (*asset.Asset, error) {
+	job, outputs, err := s.Get(ctx, userID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.Status != StatusSucceeded {
+		return nil, errOutputNotReady
+	}
+	for _, output := range outputs {
+		if output.Format != "glb" || output.AssetID == nil || *output.AssetID == "" {
+			continue
+		}
+		stored, err := s.assets.Get(ctx, *output.AssetID)
+		if err != nil {
+			return nil, err
+		}
+		if stored.OwnerID != userID || stored.Kind != asset.KindModel || stored.Status != asset.StatusReady {
+			return nil, errJobNotFound
+		}
+		return stored, nil
+	}
+	return nil, errOutputNotReady
 }
 
 func (s *Service) List(ctx context.Context, userID string, page, pageSize int) ([]GenerationJob, int64, error) {
@@ -265,6 +290,7 @@ func (s *Service) Complete(ctx context.Context, jobID string, req WorkerComplete
 	now := s.now().UTC()
 	var updated *GenerationJob
 	var outputs []GenerationOutput
+	var storedAsset *asset.Asset
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		job, err := lockJob(tx, jobID)
 		if err != nil {
@@ -298,6 +324,7 @@ func (s *Service) Complete(ctx context.Context, jobID string, req WorkerComplete
 		if err != nil {
 			return err
 		}
+		storedAsset = stored
 		output := GenerationOutput{
 			ID:         uuid.NewString(),
 			JobID:      job.ID,
@@ -308,7 +335,7 @@ func (s *Service) Complete(ctx context.Context, jobID string, req WorkerComplete
 			MIMEType:   stored.MIMEType,
 			SizeBytes:  stored.SizeBytes,
 			SHA256:     stored.SHA256,
-			Metadata:   json.RawMessage(`{"provider":"mock"}`),
+			Metadata:   json.RawMessage(fmt.Sprintf(`{"provider":%q}`, job.Provider)),
 			CreatedAt:  now,
 		}
 		if err := tx.Create(&output).Error; err != nil {
@@ -334,6 +361,9 @@ func (s *Service) Complete(ctx context.Context, jobID string, req WorkerComplete
 		return nil
 	})
 	if err != nil {
+		if storedAsset != nil {
+			_ = s.assets.Delete(ctx, storedAsset.ID)
+		}
 		return nil, nil, err
 	}
 	return updated, outputs, nil

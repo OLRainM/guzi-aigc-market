@@ -57,6 +57,57 @@ func New(db *gorm.DB, store ObjectStore, bucket string) (*Service, error) {
 	return &Service{db: db, store: store, bucket: bucket}, nil
 }
 
+func (s *Service) Copy(ctx context.Context, sourceID, ownerID, productID string) (*Asset, error) {
+	source, err := s.Get(ctx, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	if source.OwnerID != ownerID || source.Status != StatusReady {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if source.Kind != KindModel {
+		return nil, ErrKindMismatch
+	}
+	if err := s.store.EnsureBucket(ctx); err != nil {
+		return nil, err
+	}
+	body, info, err := s.store.Get(ctx, source.ObjectKey)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	limit := source.SizeBytes
+	if info.Size > 0 {
+		limit = info.Size
+	}
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) == 0 {
+		return nil, ErrInvalidFile
+	}
+	if int64(len(data)) > MaxModelBytes {
+		return nil, ErrFileTooLarge
+	}
+	id := uuid.NewString()
+	key := objectKey(ownerID, productID, id, extensionFromKey(source.ObjectKey, "glb"))
+	if err := s.store.Put(ctx, key, source.MIMEType, bytes.NewReader(data), int64(len(data))); err != nil {
+		return nil, err
+	}
+	hasher := sha256.New()
+	_, _ = hasher.Write(data)
+	copied := Asset{
+		ID: id, OwnerID: ownerID, Kind: source.Kind, OriginalName: source.OriginalName, ObjectKey: key,
+		Bucket: s.bucket, MIMEType: source.MIMEType, SizeBytes: int64(len(data)), SHA256: hex.EncodeToString(hasher.Sum(nil)), Status: StatusReady,
+	}
+	if err := s.db.WithContext(ctx).Create(&copied).Error; err != nil {
+		_ = s.store.Delete(ctx, key)
+		return nil, err
+	}
+	return &copied, nil
+}
+
 func (s *Service) Put(ctx context.Context, ownerID, productID, expectedKind, filename, declaredMIME string, body io.Reader, size int64) (*Asset, error) {
 	if err := s.store.EnsureBucket(ctx); err != nil {
 		return nil, err

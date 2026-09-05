@@ -9,7 +9,7 @@ from typing import Any, Mapping, Protocol
 from contracts import GenerationJobMessage
 from promptopt import PromptOptimizer
 from providers.base import GenerationProvider, ProviderError, ProviderErrorCode, ProviderStatus
-from providers.mock import MockProvider, minimal_glb
+from providers.mock import MockProvider
 
 logger = logging.getLogger("ai-worker")
 
@@ -127,29 +127,14 @@ class JobProcessor:
             if status != "RUNNING":
                 raise RuntimeError(f"unexpected claim status: {status}")
             job = claimed.get("job") if isinstance(claimed.get("job"), dict) else {}
-            prompt = str(job.get("raw_prompt") or "").strip()
+            prompt = str(job.get("optimized_prompt") or job.get("raw_prompt") or "").strip()
             product_type = str(job.get("product_type") or "")
             parameters = {"attempt": attempt, "product_type": product_type}
             if not prompt:
                 raise ProviderError(ProviderErrorCode.INVALID_REQUEST, "prompt is required", retryable=False)
-            await self._progress(job_id, attempt, "OPTIMIZING_PROMPT", 15)
-            optimized = await self.optimizer.optimize(prompt, product_type)
-            await self._progress(
-                job_id,
-                attempt,
-                "OPTIMIZING_PROMPT",
-                25,
-                extra={
-                    "optimized_prompt": optimized.text,
-                    "product_type": optimized.product_type,
-                    "rag_context": optimized.rag_context,
-                    "rag_version": optimized.rag_version,
-                    "template_version": optimized.template_version,
-                    "structured_prompt": optimized.structured,
-                },
-            )
+            await self._progress(job_id, attempt, "OPTIMIZING_PROMPT", 25)
             await self._progress(job_id, attempt, "SUBMITTING_PROVIDER", 40)
-            submission = await self.provider.submit(optimized.text, parameters)
+            submission = await self.provider.submit(prompt, parameters)
             progress = await self._wait_for_success(job_id, attempt, submission.provider_job_id)
             if progress.status != ProviderStatus.SUCCEEDED:
                 if progress.error:
@@ -160,7 +145,9 @@ class JobProcessor:
             if not outputs:
                 raise RuntimeError("provider returned no outputs")
             output = outputs[0]
-            content = output.content if output.content else minimal_glb()
+            if not output.content:
+                raise ProviderError(ProviderErrorCode.OUTPUT_INVALID, "provider returned empty GLB", retryable=True)
+            content = output.content
             await self._progress(job_id, attempt, "STORING_OUTPUT", 90)
             completed = await self.api.complete(
                 job_id,
@@ -223,3 +210,4 @@ class JobProcessor:
             await self.api.fail(job_id, attempt, error_code, error_message, retryable)
         except Exception:
             logger.exception("failed to report job failure", extra={"job_id": job_id})
+            raise

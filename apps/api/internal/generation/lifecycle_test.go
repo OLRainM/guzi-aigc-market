@@ -41,6 +41,7 @@ func setupWorkerRouter(t *testing.T) (*Service, *gin.Engine, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	service.optimizer = testPromptOptimizer{}
 	handler := &Handler{service: service, workerToken: "worker-token"}
 	router := gin.New()
 	api := router.Group("/api/v1")
@@ -64,7 +65,7 @@ func jobJSON(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 
 func createJobWithToken(t *testing.T, router http.Handler, token string) string {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(createJobRequest("a collectible figure")))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(createJobRequestForTest(t, router, token, "a collectible figure")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Idempotency-Key", uuid.NewString())

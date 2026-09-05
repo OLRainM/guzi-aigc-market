@@ -25,6 +25,11 @@ var (
 	errTooManyJobs         = errors.New("too many active generation jobs")
 	errJobNotFound         = errors.New("generation job not found")
 	errInvalidTransition   = errors.New("invalid generation job transition")
+	errOutputNotReady           = errors.New("generation output not ready")
+	errPromptPreviewInvalid     = errors.New("prompt preview is invalid")
+	errPromptOptimizerUnavailable = errors.New("prompt optimizer unavailable")
+	ErrJobNotFound              = errJobNotFound
+	ErrOutputNotReady      = errOutputNotReady
 )
 
 type Service struct {
@@ -34,13 +39,14 @@ type Service struct {
 	timeout   time.Duration
 	now       func() time.Time
 	publisher Publisher
+	optimizer PromptOptimizer
 }
 
 func NewService(db *gorm.DB, assets *asset.Service, rdb *redis.Client, timeout time.Duration) (*Service, error) {
 	if timeout <= 0 {
-		timeout = 2 * time.Minute
+		timeout = 15 * time.Minute
 	}
-	if err := db.AutoMigrate(&GenerationJob{}, &GenerationOutput{}, &GenerationOutbox{}); err != nil {
+	if err := db.AutoMigrate(&GenerationJob{}, &GenerationOutput{}, &GenerationOutbox{}, &PromptPreview{}); err != nil {
 		return nil, err
 	}
 	service := &Service{
@@ -61,7 +67,7 @@ func (s *Service) Create(ctx context.Context, userID, idempotencyKey, requestID 
 	if err := validateCreateRequest(req); err != nil {
 		return nil, err
 	}
-	hash, payload, err := hashRequest(req)
+	hash, err := hashRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -77,64 +83,52 @@ func (s *Service) Create(ctx context.Context, userID, idempotencyKey, requestID 
 		return nil, err
 	}
 
-	var active int64
-	if err := s.db.WithContext(ctx).Model(&GenerationJob{}).Where("user_id = ? AND status IN ?", userID, []Status{StatusQueued, StatusRunning}).Count(&active).Error; err != nil {
-		return nil, err
-	}
-	if active >= maxActiveJobsPerUser {
-		return nil, errTooManyJobs
-	}
-
 	now := s.now().UTC()
-	job := GenerationJob{
-		ID:             uuid.NewString(),
-		UserID:         userID,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    hash,
-		Status:         StatusQueued,
-		Stage:          StageQueued,
-		Progress:       0,
-		RawPrompt:      strings.TrimSpace(req.Prompt),
-		RequestPayload: payload,
-		Provider:       normalizeProvider(req.Provider),
-		Attempt:        1,
-		MaxAttempts:    3,
-		Version:        1,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-	message := StreamMessage{
-		SchemaVersion: MessageVersion,
-		EventType:     JobCreatedEvent,
-		JobID:         job.ID,
-		UserID:        userID,
-		Attempt:       job.Attempt,
-		RequestID:     requestID,
-		CreatedAt:     now.Format(time.RFC3339),
-	}
-	payloadBytes, err := json.Marshal(message.Fields())
-	if err != nil {
-		return nil, err
-	}
-	outbox := GenerationOutbox{
-		ID:          uuid.NewString(),
-		AggregateID: job.ID,
-		EventType:   JobCreatedEvent,
-		Payload:     payloadBytes,
-		Status:      OutboxPending,
-		AvailableAt: now,
-		CreatedAt:   now,
-	}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var created *GenerationJob
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		preview, err := lockPromptPreview(tx, userID, strings.TrimSpace(req.PromptPreviewID), now)
+		if err != nil {
+			return err
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND status IN ?", userID, []Status{StatusQueued, StatusRunning}).Find(&[]GenerationJob{}).Error; err != nil {
 			return err
 		}
-		var lockedActive int64
-		if err := tx.Model(&GenerationJob{}).Where("user_id = ? AND status IN ?", userID, []Status{StatusQueued, StatusRunning}).Count(&lockedActive).Error; err != nil {
+		var active int64
+		if err := tx.Model(&GenerationJob{}).Where("user_id = ? AND status IN ?", userID, []Status{StatusQueued, StatusRunning}).Count(&active).Error; err != nil {
 			return err
 		}
-		if lockedActive >= maxActiveJobsPerUser {
+		if active >= maxActiveJobsPerUser {
 			return errTooManyJobs
+		}
+		payload, err := requestPayload(req, *preview)
+		if err != nil {
+			return err
+		}
+		finalPrompt := strings.TrimSpace(req.FinalPrompt)
+		job := GenerationJob{
+			ID: uuid.NewString(), UserID: userID, IdempotencyKey: idempotencyKey, RequestHash: hash,
+			Status: StatusQueued, Stage: StageQueued, Progress: 0,
+			RawPrompt: preview.RawPrompt, OptimizedPrompt: &finalPrompt, StructuredPrompt: preview.StructuredPrompt,
+			RequestPayload: payload, RAGContext: preview.RAGContext, Provider: normalizeProvider(req.Provider),
+			Attempt: 1, MaxAttempts: 3, Version: 1, CreatedAt: now, UpdatedAt: now,
+		}
+		if preview.RAGVersion != "" {
+			job.RAGVersion = &preview.RAGVersion
+		}
+		if preview.PromptTemplateVersion != "" {
+			job.PromptTemplateVersion = &preview.PromptTemplateVersion
+		}
+		message := StreamMessage{
+			SchemaVersion: MessageVersion, EventType: JobCreatedEvent, JobID: job.ID, UserID: userID,
+			Attempt: job.Attempt, RequestID: requestID, CreatedAt: now.Format(time.RFC3339),
+		}
+		payloadBytes, err := json.Marshal(message.Fields())
+		if err != nil {
+			return err
+		}
+		outbox := GenerationOutbox{
+			ID: uuid.NewString(), AggregateID: job.ID, EventType: JobCreatedEvent, Payload: payloadBytes,
+			Status: OutboxPending, AvailableAt: now, CreatedAt: now,
 		}
 		if err := tx.Create(&job).Error; err != nil {
 			if errors.Is(err, gorm.ErrDuplicatedKey) {
@@ -142,20 +136,28 @@ func (s *Service) Create(ctx context.Context, userID, idempotencyKey, requestID 
 			}
 			return err
 		}
-		return tx.Create(&outbox).Error
-	}); err != nil {
-		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			var conflict GenerationJob
-			if loadErr := s.db.WithContext(ctx).Where("user_id = ? AND idempotency_key = ?", userID, idempotencyKey).First(&conflict).Error; loadErr == nil {
-				if conflict.RequestHash != hash {
-					return nil, errIdempotencyConflict
-				}
-				return &conflict, nil
-			}
+		if err := tx.Create(&outbox).Error; err != nil {
+			return err
 		}
-		return nil, err
+		if err := tx.Model(preview).Update("consumed_at", now).Error; err != nil {
+			return err
+		}
+		created = &job
+		return nil
+	})
+	if err == nil {
+		return created, nil
 	}
-	return &job, nil
+	if errors.Is(err, gorm.ErrDuplicatedKey) || errors.Is(err, errIdempotencyConflict) {
+		var conflict GenerationJob
+		if loadErr := s.db.WithContext(ctx).Where("user_id = ? AND idempotency_key = ?", userID, idempotencyKey).First(&conflict).Error; loadErr == nil {
+			if conflict.RequestHash != hash {
+				return nil, errIdempotencyConflict
+			}
+			return &conflict, nil
+		}
+	}
+	return nil, err
 }
 
 func (s *Service) ToResponse(job GenerationJob, outputs []GenerationOutput) JobResponse {
@@ -184,37 +186,37 @@ func (s *Service) ToResponse(job GenerationJob, outputs []GenerationOutput) JobR
 }
 
 func validateCreateRequest(req CreateJobRequest) error {
-	prompt := strings.TrimSpace(req.Prompt)
-	productType := strings.TrimSpace(req.ProductType)
-	if prompt == "" || utf8.RuneCountInString(prompt) > 2000 {
+	if _, err := uuid.Parse(strings.TrimSpace(req.PromptPreviewID)); err != nil {
 		return errInvalidArgument
 	}
-	if productType == "" || utf8.RuneCountInString(productType) > 64 {
-		return errInvalidArgument
-	}
-	if !allowedProvider(req.Provider) {
-		return errInvalidArgument
-	}
-	if !req.CopyrightConfirmed {
+	finalPrompt := strings.TrimSpace(req.FinalPrompt)
+	if finalPrompt == "" || utf8.RuneCountInString(finalPrompt) > 1024 || !allowedProvider(req.Provider) || !req.CopyrightConfirmed {
 		return errInvalidArgument
 	}
 	return nil
 }
 
-func hashRequest(req CreateJobRequest) (string, json.RawMessage, error) {
+func hashRequest(req CreateJobRequest) (string, error) {
 	payload := map[string]any{
-		"prompt":               strings.TrimSpace(req.Prompt),
-		"product_type":         strings.TrimSpace(req.ProductType),
-		"provider":             req.Provider,
-		"parameters":           req.Parameters,
-		"copyright_confirmed":  req.CopyrightConfirmed,
+		"prompt_preview_id": strings.TrimSpace(req.PromptPreviewID), "final_prompt": strings.TrimSpace(req.FinalPrompt),
+		"provider": req.Provider, "parameters": req.Parameters, "copyright_confirmed": req.CopyrightConfirmed,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), raw, nil
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func requestPayload(req CreateJobRequest, preview PromptPreview) (json.RawMessage, error) {
+	payload := map[string]any{
+		"prompt_preview_id": preview.ID, "prompt": preview.RawPrompt, "product_type": preview.ProductType,
+		"final_prompt": strings.TrimSpace(req.FinalPrompt), "parameters": req.Parameters,
+		"copyright_confirmed": req.CopyrightConfirmed, "rag_version": preview.RAGVersion,
+		"template_version": preview.PromptTemplateVersion,
+	}
+	return json.Marshal(payload)
 }
 
 func allowedProvider(provider string) bool {

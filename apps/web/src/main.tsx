@@ -1,8 +1,8 @@
 import { StrictMode, Suspense, createContext, lazy, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { apiBase, assetSrc, generationStageLabel, generationStatusLabel, newIdempotencyKey, priceLabel, request, refreshSession, setAccessToken, statusLabel, type AuthPayload, type GenerationJob, type GenerationJobList, type Product, type ProductList, type User } from './api';
-import { AccountCenter, FavoritesPage, ProductActions, SandboxPage } from './accountPages';
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { apiBase, assetSrc, generationStageLabel, generationStatusLabel, newIdempotencyKey, priceLabel, request, refreshSession, setAccessToken, statusLabel, type AuthPayload, type GenerationJob, type GenerationJobList, type Product, type ProductList, type PromptPreview, type User } from './api';
+import { AccountCenter, CheckoutPage, FavoritesPage, OrderDetailPage, OrdersPage, ProductActions, SandboxPage } from './accountPages';
 import './styles.css';
 
 const ModelViewer = lazy(() => import('./ModelViewer').then(module => ({ default: module.ModelViewer })));
@@ -22,12 +22,15 @@ function AuthProvider({ children }: { children: ReactNode }) {
 }
 function useAuth() { const value = useContext(AuthContext); if (!value) throw new Error('AuthProvider missing'); return value; }
 
-function Home() { const [status, setStatus] = useState('检查中'); useEffect(() => { fetch(`${apiBase}/healthz`).then(r => setStatus(r.ok ? 'API 正常' : 'API 异常')).catch(() => setStatus('API 未连接')); }, []); return <main><p className="eyebrow">AIGC 3D PLATFORM</p><h1>谷子交易与 3D 展示平台</h1><p className="lead">账户、商品、收藏、个人中心、交易沙盒、网页 3D 预览和 AI 生成任务已接入。登录后可收藏商品、管理资料，并用虚拟资金做模拟买卖。</p><div className="status">{status}</div></main>; }
+function Home() { const [status, setStatus] = useState('检查中'); useEffect(() => { fetch(`${apiBase}/healthz`).then(r => setStatus(r.ok ? 'API 正常' : 'API 异常')).catch(() => setStatus('API 未连接')); }, []); return <main><p className="eyebrow">AIGC 3D PLATFORM</p><h1>谷子交易与 3D 展示平台</h1><p className="lead">账户、商品、收藏、个人中心、模拟订单、交易沙盒、网页 3D 预览和 AI 生成任务已接入。登录后可下单、模拟支付发货，并用虚拟资金做即时买卖。</p><div className="status">{status}</div></main>; }
 function GenerationWorkspace() {
+  const navigate = useNavigate();
   const [prompt, setPrompt] = useState('a collectible figure');
   const [productType, setProductType] = useState('手办');
   const [jobs, setJobs] = useState<GenerationJob[]>([]);
   const [activeId, setActiveId] = useState('');
+  const [preview, setPreview] = useState<PromptPreview | null>(null);
+  const [finalPrompt, setFinalPrompt] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const active = jobs.find(job => job.id === activeId) ?? jobs[0] ?? null;
@@ -52,16 +55,26 @@ function GenerationWorkspace() {
     }, 2000);
     return () => window.clearInterval(timer);
   }, [active?.id, active?.status]);
-  const create = async (event: FormEvent) => {
+  const previewPrompt = async (event: FormEvent) => {
     event.preventDefault(); setError(''); setSubmitting(true);
+    try {
+      const body = await request<PromptPreview>('/api/v1/generation-jobs/prompt-preview', {
+        method: 'POST', body: JSON.stringify({ prompt, product_type: productType }),
+      });
+      setPreview(body); setFinalPrompt(body.optimized_prompt);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '优化失败'); } finally { setSubmitting(false); }
+  };
+  const create = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!preview) return;
+    setError(''); setSubmitting(true);
     try {
       const body = await request<{ job: GenerationJob }>('/api/v1/generation-jobs', {
         method: 'POST',
         headers: { 'Idempotency-Key': newIdempotencyKey() },
-        body: JSON.stringify({ prompt, product_type: productType, provider: 'hy3d', copyright_confirmed: true }),
+        body: JSON.stringify({ prompt_preview_id: preview.id, final_prompt: finalPrompt, provider: 'hy3d', copyright_confirmed: true }),
       });
-      mergeJob(body.job);
-      setActiveId(body.job.id);
+      mergeJob(body.job); setActiveId(body.job.id); setPreview(null); setFinalPrompt('');
     } catch (reason) { setError(reason instanceof Error ? reason.message : '创建失败'); } finally { setSubmitting(false); }
   };
   const act = async (path: 'cancel' | 'retry') => {
@@ -77,11 +90,16 @@ function GenerationWorkspace() {
       <p className="eyebrow">WORKSPACE</p>
       <h1>AI 工作台</h1>
       <p className="lead">提交提示词后会先用术语库和 LLM 优化，再交给混元 HY-3D 生成静态 GLB。页面每 2 秒轮询状态。</p>
-      <form className="auth-card publish-form" onSubmit={create}>
-        <label>提示词<textarea value={prompt} onChange={e => setPrompt(e.target.value)} maxLength={2000} required /></label>
-        <label>商品类型<input value={productType} onChange={e => setProductType(e.target.value)} maxLength={64} required /></label>
+      <form className="auth-card publish-form" onSubmit={preview ? create : previewPrompt}>
+        <label>提示词<textarea value={prompt} onChange={e => { setPrompt(e.target.value); setPreview(null); }} maxLength={2000} required /></label>
+        <label>商品类型<input value={productType} onChange={e => { setProductType(e.target.value); setPreview(null); }} maxLength={64} required /></label>
+        {preview && <>
+          <p className="muted">优化来源：{preview.source} · 版本：{preview.template_version || '默认'} · 有效期至 {new Date(preview.expires_at).toLocaleString()}</p>
+          <label>确认后的 Prompt<textarea value={finalPrompt} onChange={e => setFinalPrompt(e.target.value)} maxLength={1024} required /></label>
+          <details><summary>查看结构化参数与 RAG 摘要</summary><pre>{JSON.stringify({ structured_prompt: preview.structured_prompt, rag_context: preview.rag_context }, null, 2)}</pre></details>
+        </>}
         {error && <p className="error" role="alert">{error}</p>}
-        <button disabled={submitting}>{submitting ? '提交中…' : '创建生成任务'}</button>
+        <button disabled={submitting}>{submitting ? (preview ? '创建中…' : '优化中…') : (preview ? '确认并创建生成任务' : '预览优化 Prompt')}</button>
       </form>
       <section className="generation-layout">
         <div className="job-list">
@@ -103,6 +121,7 @@ function GenerationWorkspace() {
             <div className="viewer-actions">
               {(active.status === 'QUEUED' || active.status === 'RUNNING') && <button className="secondary" onClick={() => void act('cancel')}>取消</button>}
               {active.status === 'FAILED' && active.attempt < active.max_attempts && <button onClick={() => void act('retry')}>重试</button>}
+              {active.status === 'SUCCEEDED' && model && <button onClick={() => navigate(`/sell?job=${encodeURIComponent(active.id)}&prompt=${encodeURIComponent(active.raw_prompt)}&productType=${encodeURIComponent(active.product_type || productType)}`)}>带入发布</button>}
             </div>
             {model
               ? <Suspense fallback={<div className="viewer-progress" role="status"><span>正在准备 3D 预览</span></div>}><ModelViewer model={{ id: model.id, kind: 'MODEL', mime_type: model.mime_type, size_bytes: model.size_bytes, sha256: '', original_name: `${active.id}.glb`, content_url: model.content_url! }} compact /></Suspense>
@@ -149,14 +168,22 @@ function ProductDetail() {
 
 function Publish() {
   const navigate = useNavigate();
-  const [title, setTitle] = useState(''); const [description, setDescription] = useState(''); const [price, setPrice] = useState('129.00');
-  const [ipName, setIpName] = useState(''); const [category, setCategory] = useState('手办'); const [condition, setCondition] = useState('全新');
+  const [params] = useSearchParams();
+  const jobId = params.get('job')?.trim() ?? '';
+  const [title, setTitle] = useState(() => (params.get('prompt') ?? '').slice(0, 120));
+  const [description, setDescription] = useState(() => params.get('prompt') ?? '');
+  const [price, setPrice] = useState('129.00');
+  const [ipName, setIpName] = useState('原创');
+  const [category, setCategory] = useState(() => params.get('productType') || '手办');
+  const [condition, setCondition] = useState('全新');
   const [stock, setStock] = useState('1'); const [product, setProduct] = useState<Product | null>(null);
   const [error, setError] = useState(''); const [submitting, setSubmitting] = useState(false);
   const create = async (event: FormEvent) => {
     event.preventDefault(); setError(''); setSubmitting(true);
     try {
-      const body = await request<{ product: Product }>('/api/v1/products', { method: 'POST', body: JSON.stringify({ title, description, price_cents: Math.round(Number(price) * 100), ip_name: ipName, category, condition, stock: Number(stock), transaction_type: 'SALE' }) });
+      const payload: Record<string, unknown> = { title, description, price_cents: Math.round(Number(price) * 100), ip_name: ipName, category, condition, stock: Number(stock), transaction_type: 'SALE' };
+      if (jobId) payload.generation_job_id = jobId;
+      const body = await request<{ product: Product }>('/api/v1/products', { method: 'POST', body: JSON.stringify(payload) });
       setProduct(body.product);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '创建失败'); } finally { setSubmitting(false); }
   };
@@ -177,7 +204,7 @@ function Publish() {
     try { await request(`/api/v1/products/${product.id}/publish`, { method: 'POST' }); navigate(`/products/${product.id}`); }
     catch (reason) { setError(reason instanceof Error ? reason.message : '发布失败'); } finally { setSubmitting(false); }
   };
-  return <main className="wide"><p className="eyebrow">SELL</p><h1>发布商品</h1>{!product ? <form className="auth-card publish-form" onSubmit={create}><label>标题<input value={title} onChange={e => setTitle(e.target.value)} minLength={2} maxLength={120} required /></label><label>描述<textarea value={description} onChange={e => setDescription(e.target.value)} required rows={5} /></label><label>价格（元）<input value={price} onChange={e => setPrice(e.target.value)} type="number" min="0.01" step="0.01" required /></label><label>IP / 系列<input value={ipName} onChange={e => setIpName(e.target.value)} required /></label><label>分类<input value={category} onChange={e => setCategory(e.target.value)} required /></label><label>成色<input value={condition} onChange={e => setCondition(e.target.value)} required /></label><label>库存<input value={stock} onChange={e => setStock(e.target.value)} type="number" min="0" required /></label>{error && <p className="error" role="alert">{error}</p>}<button disabled={submitting}>{submitting ? '创建中…' : '创建草稿'}</button></form> : <section className="auth-card publish-form"><p className="muted">草稿已创建，请上传 1–6 张图片，可选上传一个不超过 20 MB 的 GLB。上传后可直接预览 3D 模型。</p><label>商品图片<input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" onChange={e => { const file = e.target.files?.[0]; if (file) void upload('images', file); e.target.value = ''; }} /></label><div className="gallery">{product.images.map(image => <img key={image.id} src={assetSrc(image)} alt={image.original_name} />)}</div><label>GLB 模型（可选）<input type="file" accept=".glb,model/gltf-binary" onChange={e => { const file = e.target.files?.[0]; if (file) void upload('model', file); e.target.value = ''; }} /></label>{product.model && <Suspense fallback={<div className="viewer-progress" role="status"><span>正在准备 3D 预览</span></div>}><ModelViewer model={product.model} fallbackImages={product.images} compact /></Suspense>}{error && <p className="error" role="alert">{error}</p>}<button disabled={submitting || product.images.length < 1} onClick={() => void publish()}>{submitting ? '发布中…' : '发布商品'}</button></section>}</main>;
+  return <main className="wide"><p className="eyebrow">SELL</p><h1>发布商品</h1>{jobId && !product && <p className="muted">已从生成任务带入 GLB，创建草稿后仍需补至少 1 张图片才能发布。</p>}{!product ? <form className="auth-card publish-form" onSubmit={create}><label>标题<input value={title} onChange={e => setTitle(e.target.value)} minLength={2} maxLength={120} required /></label><label>描述<textarea value={description} onChange={e => setDescription(e.target.value)} required rows={5} /></label><label>价格（元）<input value={price} onChange={e => setPrice(e.target.value)} type="number" min="0.01" step="0.01" required /></label><label>IP / 系列<input value={ipName} onChange={e => setIpName(e.target.value)} required /></label><label>分类<input value={category} onChange={e => setCategory(e.target.value)} required /></label><label>成色<input value={condition} onChange={e => setCondition(e.target.value)} required /></label><label>库存<input value={stock} onChange={e => setStock(e.target.value)} type="number" min="0" required /></label>{error && <p className="error" role="alert">{error}</p>}<button disabled={submitting}>{submitting ? '创建中…' : jobId ? '创建草稿并绑定模型' : '创建草稿'}</button></form> : <section className="auth-card publish-form"><p className="muted">{product.model ? '草稿已绑定生成模型，请再上传 1–6 张图片后发布。也可替换 GLB。' : '草稿已创建，请上传 1–6 张图片，可选上传一个不超过 20 MB 的 GLB。上传后可直接预览 3D 模型。'}</p><label>商品图片<input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" onChange={e => { const file = e.target.files?.[0]; if (file) void upload('images', file); e.target.value = ''; }} /></label><div className="gallery">{product.images.map(image => <img key={image.id} src={assetSrc(image)} alt={image.original_name} />)}</div><label>GLB 模型（可选）<input type="file" accept=".glb,model/gltf-binary" onChange={e => { const file = e.target.files?.[0]; if (file) void upload('model', file); e.target.value = ''; }} /></label>{product.model && <Suspense fallback={<div className="viewer-progress" role="status"><span>正在准备 3D 预览</span></div>}><ModelViewer model={product.model} fallbackImages={product.images} compact /></Suspense>}{error && <p className="error" role="alert">{error}</p>}<button disabled={submitting || product.images.length < 1} onClick={() => void publish()}>{submitting ? '发布中…' : '发布商品'}</button></section>}</main>;
 }
 
 function MyListings() {
@@ -201,7 +228,7 @@ function Profile() {
   const logout = async () => { await auth.logout(); navigate('/login', { replace: true }); };
   return <><AccountCenter onLogout={logout} /><div className="wide-wrap"><MyListings /></div></>;
 }
-function Navigation() { const auth = useAuth(); return <nav><div className="nav-links"><Link to="/">首页</Link><Link to="/market">商品市场</Link><Link to="/sell">发布商品</Link><Link to="/favorites">收藏</Link><Link to="/sandbox">交易沙盒</Link><Link to="/workspace/generation">AI 工作台</Link><Link to="/me">个人中心</Link></div><Link className="account-link" to={auth.user ? '/me' : '/login'}>{auth.user?.username ?? '登录 / 注册'}</Link></nav>; }
+function Navigation() { const auth = useAuth(); return <nav><div className="nav-links"><Link to="/">首页</Link><Link to="/market">商品市场</Link><Link to="/sell">发布商品</Link><Link to="/favorites">收藏</Link><Link to="/orders">模拟订单</Link><Link to="/sandbox">交易沙盒</Link><Link to="/workspace/generation">AI 工作台</Link><Link to="/me">个人中心</Link></div><Link className="account-link" to={auth.user ? '/me' : '/login'}>{auth.user?.username ?? '登录 / 注册'}</Link></nav>; }
 function Footer() { return <footer>AIGC 3D Platform</footer>; }
-function App() { return <AuthProvider><Navigation/><Routes><Route path="/" element={<Home/>}/><Route path="/login" element={<AuthPage/>}/><Route path="/market" element={<Market/>}/><Route path="/sell" element={<Protected><Publish/></Protected>}/><Route path="/products/:id" element={<ProductDetail/>}/><Route path="/workspace/generation" element={<Protected><GenerationWorkspace/></Protected>}/><Route path="/favorites" element={<Protected><FavoritesPage/></Protected>}/><Route path="/sandbox" element={<Protected><SandboxPage/></Protected>}/><Route path="/me" element={<Protected><Profile/></Protected>}/></Routes><Footer/></AuthProvider>; }
+function App() { return <AuthProvider><Navigation/><Routes><Route path="/" element={<Home/>}/><Route path="/login" element={<AuthPage/>}/><Route path="/market" element={<Market/>}/><Route path="/sell" element={<Protected><Publish/></Protected>}/><Route path="/products/:id" element={<ProductDetail/>}/><Route path="/workspace/generation" element={<Protected><GenerationWorkspace/></Protected>}/><Route path="/favorites" element={<Protected><FavoritesPage/></Protected>}/><Route path="/checkout" element={<Protected><CheckoutPage/></Protected>}/><Route path="/orders" element={<Protected><OrdersPage/></Protected>}/><Route path="/orders/:id" element={<Protected><OrderDetailPage/></Protected>}/><Route path="/sandbox" element={<Protected><SandboxPage/></Protected>}/><Route path="/me" element={<Protected><Profile/></Protected>}/></Routes><Footer/></AuthProvider>; }
 createRoot(document.getElementById('root')!).render(<StrictMode><BrowserRouter><App/></BrowserRouter></StrictMode>);

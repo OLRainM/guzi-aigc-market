@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  activityLabel, favoriteStatusLabel, priceLabel, request,
+  activityLabel, favoriteStatusLabel, newIdempotencyKey, orderStatusLabel, priceLabel, request,
   type ActivityItem, type Address, type Favorite, type FavoriteFolder, type FavoriteList,
-  type NotificationItem, type Preferences, type ProfilePayload, type SandboxSnapshot,
+  type NotificationItem, type Preferences, type Product, type ProfilePayload, type SandboxSnapshot,
+  type TradeOrder, type TradeOrderList, type User,
 } from './api';
 
 function formatTime(value?: string | null) {
@@ -150,6 +151,7 @@ export function AccountCenter({ onLogout }: { onLogout: () => Promise<void> }) {
       <p className="lead">{payload?.user.email || '未填写邮箱'} · 收藏 {payload?.stats.favorites ?? 0} · 未读通知 {payload?.stats.unread_notifications ?? 0}</p>
       <div className="entry-grid">
         <Link className="product-card" to="/favorites"><strong>我的收藏</strong><span>分类筛选、批量管理、失效提示</span></Link>
+        <Link className="product-card" to="/orders"><strong>模拟订单</strong><span>买入 {payload?.stats.buy_orders ?? 0} · 卖出 {payload?.stats.sell_orders ?? 0}</span></Link>
         <Link className="product-card" to="/sandbox"><strong>交易沙盒</strong><span>虚拟资金 {priceLabel(payload?.sandbox.cash_cents ?? 0)}</span></Link>
         <Link className="product-card" to="/sell"><strong>我的发布</strong><span>继续编辑或发布商品</span></Link>
       </div>
@@ -167,7 +169,7 @@ export function AccountCenter({ onLogout }: { onLogout: () => Promise<void> }) {
           <h2>偏好设置</h2>
           {prefs && <>
             <label className="check-row"><input type="checkbox" checked={prefs.notify_favorite_updates} onChange={e => setPrefs({ ...prefs, notify_favorite_updates: e.target.checked })} />收藏商品更新通知</label>
-            <label className="check-row"><input type="checkbox" checked={prefs.notify_trade_events} onChange={e => setPrefs({ ...prefs, notify_trade_events: e.target.checked })} />沙盒成交通知</label>
+            <label className="check-row"><input type="checkbox" checked={prefs.notify_trade_events} onChange={e => setPrefs({ ...prefs, notify_trade_events: e.target.checked })} />订单与沙盒成交通知</label>
             <label className="check-row"><input type="checkbox" checked={prefs.notify_system} onChange={e => setPrefs({ ...prefs, notify_system: e.target.checked })} />系统通知</label>
             <label>默认收藏分类<input value={prefs.default_favorite_folder} onChange={e => setPrefs({ ...prefs, default_favorite_folder: e.target.value })} /></label>
             <button type="button" onClick={() => void savePrefs()}>保存偏好</button>
@@ -315,7 +317,7 @@ export function ProductActions({ productId, title }: { productId: string; title:
   if (!ready) {
     return (
       <section className="action-bar">
-        <Link className="account-link" to="/login" state={{ from: location.pathname }}>登录后收藏或进入沙盒交易</Link>
+        <Link className="account-link" to="/login" state={{ from: location.pathname }}>登录后收藏、下单或进入沙盒交易</Link>
       </section>
     );
   }
@@ -323,9 +325,149 @@ export function ProductActions({ productId, title }: { productId: string; title:
     <section className="action-bar">
       <label>收藏分类<input value={folder} onChange={e => setFolder(e.target.value)} /></label>
       <button type="button" onClick={() => void toggle()}>{favorited ? '取消收藏' : '收藏商品'}</button>
+      <Link className="account-link" to={`/checkout?product=${productId}`}>模拟下单</Link>
       <Link className="account-link" to={`/sandbox?product=${productId}`}>去沙盒交易</Link>
       {message && <span className="status">{message}</span>}
       {error && <span className="error">{error}</span>}
     </section>
+  );
+}
+
+export function CheckoutPage() {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const productId = params.get('product') || '';
+  const [product, setProduct] = useState<Product | null>(null);
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [addressId, setAddressId] = useState('');
+  const [quantity, setQuantity] = useState('1');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  useEffect(() => {
+    if (!productId) return;
+    request<{ product: Product }>(`/api/v1/products/${productId}`).then(body => setProduct(body.product)).catch(reason => setError(reason instanceof Error ? reason.message : '加载商品失败'));
+    request<{ items: Address[] }>('/api/v1/me/addresses').then(body => {
+      setAddresses(body.items);
+      const fallback = body.items.find(item => item.is_default) || body.items[0];
+      if (fallback) setAddressId(fallback.id);
+    }).catch(() => undefined);
+  }, [productId]);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setError(''); setSubmitting(true);
+    try {
+      const body = await request<{ order: TradeOrder }>('/api/v1/orders', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': newIdempotencyKey() },
+        body: JSON.stringify({ product_id: productId, address_id: addressId, quantity: Number(quantity) }),
+      });
+      navigate(`/orders/${body.order.id}`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '下单失败'); } finally { setSubmitting(false); }
+  };
+  return (
+    <main className="wide">
+      <p className="eyebrow">CHECKOUT</p>
+      <h1>模拟下单</h1>
+      <p className="lead">创建待支付订单会占用库存，支付时扣除虚拟资金。这不是真实支付或物流。</p>
+      {!productId && <p className="error">请从商品详情进入下单。</p>}
+      {product && <p className="muted">{product.title} · {priceLabel(product.price_cents)} · 库存 {product.stock}</p>}
+      {addresses.length === 0 && <p className="muted">还没有收货地址，请先到 <Link to="/me">个人中心</Link> 添加。</p>}
+      <form className="auth-card publish-form" onSubmit={submit}>
+        <label>收货地址
+          <select value={addressId} onChange={e => setAddressId(e.target.value)} required>
+            <option value="">请选择地址</option>
+            {addresses.map(item => <option key={item.id} value={item.id}>{item.recipient} · {item.province}{item.city}{item.detail}</option>)}
+          </select>
+        </label>
+        <label>数量<input type="number" min="1" max={product?.stock || 99} value={quantity} onChange={e => setQuantity(e.target.value)} required /></label>
+        {error && <p className="error" role="alert">{error}</p>}
+        <div className="inline-actions">
+          <button disabled={submitting || !product || !addressId}>{submitting ? '提交中…' : '创建待支付订单'}</button>
+          <Link className="account-link" to="/me">管理地址</Link>
+        </div>
+      </form>
+    </main>
+  );
+}
+
+export function OrdersPage() {
+  const [params, setParams] = useSearchParams();
+  const role = (params.get('role') || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+  const [data, setData] = useState<TradeOrderList | null>(null);
+  const [error, setError] = useState('');
+  const load = () => request<TradeOrderList>(`/api/v1/orders?role=${role}`).then(setData).catch(reason => setError(reason instanceof Error ? reason.message : '加载失败'));
+  useEffect(() => { load(); }, [role]);
+  return (
+    <main className="wide">
+      <p className="eyebrow">ORDERS</p>
+      <h1>{role === 'SELL' ? '卖出订单' : '买入订单'}</h1>
+      <p className="lead">模拟支付、发货和确认收货都走虚拟资金，不会产生真实物流。</p>
+      <div className="chip-row">
+        <button className={`chip ${role === 'BUY' ? 'is-active' : ''}`} onClick={() => setParams({ role: 'BUY' })}>我买到的</button>
+        <button className={`chip ${role === 'SELL' ? 'is-active' : ''}`} onClick={() => setParams({ role: 'SELL' })}>我卖出的</button>
+      </div>
+      {error && <p className="error" role="alert">{error}</p>}
+      {data && data.items.length === 0 && <p className="muted">还没有订单。</p>}
+      <div className="card-grid">{data?.items.map(order => (
+        <Link className="product-card" to={`/orders/${order.id}`} key={order.id}>
+          {order.cover_url ? <img src={order.cover_url} alt={order.product_title} /> : <div className="placeholder-cover">暂无图片</div>}
+          <strong>{order.product_title}</strong>
+          <span>{orderStatusLabel(order.status)} · {priceLabel(order.amount_cents)}</span>
+          <em>数量 {order.quantity}</em>
+        </Link>
+      ))}</div>
+    </main>
+  );
+}
+
+export function OrderDetailPage() {
+  const { id } = useParams();
+  const [order, setOrder] = useState<TradeOrder | null>(null);
+  const [me, setMe] = useState<User | null>(null);
+  const [error, setError] = useState('');
+  const [trackingNo, setTrackingNo] = useState('SF' + Date.now().toString().slice(-8));
+  const [acting, setActing] = useState(false);
+  const load = () => {
+    if (!id) return;
+    request<{ order: TradeOrder }>(`/api/v1/orders/${id}`).then(body => setOrder(body.order)).catch(reason => setError(reason instanceof Error ? reason.message : '加载失败'));
+  };
+  useEffect(() => { load(); request<User>('/api/v1/auth/me').then(setMe).catch(() => undefined); }, [id]);
+  const act = async (path: string, payload?: Record<string, string>) => {
+    if (!id) return; setError(''); setActing(true);
+    try {
+      const body = await request<{ order: TradeOrder }>(`/api/v1/orders/${id}/${path}`, { method: 'POST', body: JSON.stringify(payload || {}) });
+      setOrder(body.order);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败'); } finally { setActing(false); }
+  };
+  if (!order) return <main><p className="lead">{error || '正在加载订单…'}</p></main>;
+  const isBuyer = me?.id === order.buyer_id;
+  const isSeller = me?.id === order.seller_id;
+  return (
+    <main className="wide">
+      <p className="eyebrow">ORDER</p>
+      <h1>{order.product_title}</h1>
+      <p className="lead">{orderStatusLabel(order.status)} · {priceLabel(order.amount_cents)} · 数量 {order.quantity}</p>
+      <p className="muted">收货人 {order.recipient} · {order.phone}<br />{order.address_text}</p>
+      {order.tracking_no && <p className="muted">模拟运单号 {order.tracking_no}</p>}
+      {order.cancel_reason && <p className="error">{order.cancel_reason}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="inline-actions">
+        {isBuyer && order.status === 'PENDING_PAYMENT' && <button disabled={acting} onClick={() => void act('pay')}>模拟支付</button>}
+        {isBuyer && order.status === 'PENDING_PAYMENT' && <button className="ghost" disabled={acting} onClick={() => void act('cancel', { reason: '买家取消' })}>取消订单</button>}
+        {isSeller && order.status === 'PAID' && <button disabled={acting} onClick={() => void act('ship', { tracking_no: trackingNo })}>模拟发货</button>}
+        {isSeller && order.status === 'PAID' && <button className="ghost" disabled={acting} onClick={() => void act('cancel', { reason: '卖家取消' })}>卖家取消并退款</button>}
+        {isBuyer && order.status === 'SHIPPED' && <button disabled={acting} onClick={() => void act('confirm')}>确认收货</button>}
+        <Link className="account-link" to="/orders">返回订单列表</Link>
+      </div>
+      {isSeller && order.status === 'PAID' && <label>模拟运单号<input value={trackingNo} onChange={e => setTrackingNo(e.target.value)} /></label>}
+      <section>
+        <h2>订单事件</h2>
+        {(order.events || []).map(event => (
+          <div className="profile-row" key={event.id}>
+            <span>{orderStatusLabel(event.to_status)} · {event.note}</span>
+            <strong>{formatTime(event.created_at)}</strong>
+          </div>
+        ))}
+      </section>
+    </main>
   );
 }

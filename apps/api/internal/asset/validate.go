@@ -98,3 +98,14 @@ func normalizedMIME(value string) string {
 func objectKey(ownerID, productID, assetID, ext string) string {
 	return "products/" + ownerID + "/" + productID + "/" + assetID + "." + ext
 }
+
+func extensionFromKey(key, fallback string) string {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(key), "."))
+	if ext == "" {
+		return fallback
+	}
+	if ext == "jpeg" {
+		return "jpg"
+	}
+	return ext
+}

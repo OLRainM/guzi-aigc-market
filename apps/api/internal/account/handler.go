@@ -21,6 +21,7 @@ func New(db *gorm.DB) (*Handler, error) {
 	if err := db.AutoMigrate(
 		&Profile{}, &Address{}, &Preference{}, &Favorite{},
 		&Notification{}, &Activity{}, &SandboxAccount{}, &SandboxHolding{}, &SandboxOrder{},
+		&Order{}, &OrderEvent{},
 	); err != nil {
 		return nil, err
 	}
@@ -56,6 +57,14 @@ func (h *Handler) RegisterRoutes(group *gin.RouterGroup, authenticate gin.Handle
 	protected.GET("/sandbox", h.getSandbox)
 	protected.POST("/sandbox/orders", h.placeSandboxOrder)
 	protected.POST("/sandbox/reset", h.resetSandbox)
+
+	protected.GET("/orders", h.listOrders)
+	protected.POST("/orders", h.createOrder)
+	protected.GET("/orders/:id", h.getOrder)
+	protected.POST("/orders/:id/pay", h.payOrder)
+	protected.POST("/orders/:id/cancel", h.cancelOrder)
+	protected.POST("/orders/:id/ship", h.shipOrder)
+	protected.POST("/orders/:id/confirm", h.confirmOrder)
 }
 
 func abort(c *gin.Context, status int, code, message string) {

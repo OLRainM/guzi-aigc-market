@@ -2,6 +2,7 @@ package generation
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,12 @@ import (
 
 type authBody struct {
 	AccessToken string `json:"access_token"`
+}
+
+type testPromptOptimizer struct{}
+
+func (testPromptOptimizer) Optimize(_ context.Context, input PromptPreviewRequest) (*PromptPreviewResponse, error) {
+	return &PromptPreviewResponse{RawPrompt: input.Prompt, ProductType: input.ProductType, OptimizedPrompt: input.Prompt + " optimized", StructuredPrompt: map[string]any{"text_to_3d_prompt": input.Prompt + " optimized"}, RAGContext: map[string]any{"mode": "test"}, Source: "test"}, nil
 }
 
 func setupGenerationServer(t *testing.T) *gin.Engine {
@@ -42,6 +49,7 @@ func setupGenerationServer(t *testing.T) *gin.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
+	generationHandler.Service().optimizer = testPromptOptimizer{}
 	router := gin.New()
 	api := router.Group("/api/v1")
 	authHandler.RegisterRoutes(api)
@@ -66,9 +74,35 @@ func registerUser(t *testing.T, router http.Handler, username string) string {
 	return payload.AccessToken
 }
 
-func createJobRequest(prompt string) []byte {
+func promptPreviewRequest(t *testing.T, router http.Handler, token, prompt string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"prompt": prompt, "product_type": "figure"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs/prompt-preview", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("preview status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var preview PromptPreviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	return preview.ID
+}
+
+func createJobRequestForTest(t *testing.T, router http.Handler, token, prompt string) []byte {
+	t.Helper()
 	body, _ := json.Marshal(map[string]any{
-		"prompt": prompt, "product_type": "figure", "provider": "mock", "copyright_confirmed": true,
+		"prompt_preview_id": promptPreviewRequest(t, router, token, prompt), "final_prompt": prompt + " optimized", "provider": "mock", "copyright_confirmed": true,
+	})
+	return body
+}
+
+func rawCreateJobRequest(promptPreviewID, finalPrompt string) []byte {
+	body, _ := json.Marshal(map[string]any{
+		"prompt_preview_id": promptPreviewID, "final_prompt": finalPrompt, "provider": "mock", "copyright_confirmed": true,
 	})
 	return body
 }
@@ -76,7 +110,7 @@ func createJobRequest(prompt string) []byte {
 func TestCreateGenerationJob(t *testing.T) {
 	router := setupGenerationServer(t)
 	token := registerUser(t, router, "creator")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(createJobRequest("a collectible figure")))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(createJobRequestForTest(t, router, token, "a collectible figure")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Idempotency-Key", uuid.NewString())
@@ -109,7 +143,7 @@ func TestCreateGenerationJob(t *testing.T) {
 
 func TestCreateGenerationJobRequiresAuth(t *testing.T) {
 	router := setupGenerationServer(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(createJobRequest("a collectible figure")))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(rawCreateJobRequest(uuid.NewString(), "a collectible figure")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", uuid.NewString())
 	rec := httptest.NewRecorder()
@@ -122,7 +156,7 @@ func TestCreateGenerationJobRequiresAuth(t *testing.T) {
 func TestCreateGenerationJobRejectsInvalidPrompt(t *testing.T) {
 	router := setupGenerationServer(t)
 	token := registerUser(t, router, "creator")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(createJobRequest("   ")))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(rawCreateJobRequest(uuid.NewString(), "   ")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Idempotency-Key", uuid.NewString())
@@ -136,14 +170,16 @@ func TestCreateGenerationJobRejectsInvalidPrompt(t *testing.T) {
 func TestCreateGenerationJobIdempotentReplay(t *testing.T) {
 	router := setupGenerationServer(t)
 	token := registerUser(t, router, "creator")
+	previewID := promptPreviewRequest(t, router, token, "a collectible figure")
+	payload := rawCreateJobRequest(previewID, "a collectible figure optimized")
 	key := uuid.NewString()
-	first := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(createJobRequest("a collectible figure")))
+	first := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(payload))
 	first.Header.Set("Content-Type", "application/json")
 	first.Header.Set("Authorization", "Bearer "+token)
 	first.Header.Set("Idempotency-Key", key)
 	firstRec := httptest.NewRecorder()
 	router.ServeHTTP(firstRec, first)
-	second := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(createJobRequest("a collectible figure")))
+	second := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(payload))
 	second.Header.Set("Content-Type", "application/json")
 	second.Header.Set("Authorization", "Bearer "+token)
 	second.Header.Set("Idempotency-Key", key)
@@ -167,14 +203,16 @@ func TestCreateGenerationJobIdempotentReplay(t *testing.T) {
 func TestCreateGenerationJobIdempotencyConflict(t *testing.T) {
 	router := setupGenerationServer(t)
 	token := registerUser(t, router, "creator")
+	firstPreviewID := promptPreviewRequest(t, router, token, "first prompt")
+	secondPreviewID := promptPreviewRequest(t, router, token, "second prompt")
 	key := uuid.NewString()
-	first := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(createJobRequest("first prompt")))
+	first := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(rawCreateJobRequest(firstPreviewID, "first prompt optimized")))
 	first.Header.Set("Content-Type", "application/json")
 	first.Header.Set("Authorization", "Bearer "+token)
 	first.Header.Set("Idempotency-Key", key)
 	firstRec := httptest.NewRecorder()
 	router.ServeHTTP(firstRec, first)
-	second := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(createJobRequest("second prompt")))
+	second := httptest.NewRequest(http.MethodPost, "/api/v1/generation-jobs", bytes.NewReader(rawCreateJobRequest(secondPreviewID, "second prompt optimized")))
 	second.Header.Set("Content-Type", "application/json")
 	second.Header.Set("Authorization", "Bearer "+token)
 	second.Header.Set("Idempotency-Key", key)

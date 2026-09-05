@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: AIGC 3D Platform API
   version: 0.4.0
-  description: 生成任务契约与商品资产上传接口。生成任务 HTTP 实现仍属于后续阶段。
+  description: 生成任务、商品草稿与资产上传接口。创建商品可带 generation_job_id 复制已完成任务的 GLB。
   license:
     name: Proprietary
     url: https://example.com/proprietary-license
@@ -11,6 +11,36 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /products:
+    post:
+      operationId: createProduct
+      summary: 创建商品草稿，可选绑定已完成生成任务的 GLB
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description, price_cents, ip_name, category, condition, stock]
+              properties:
+                title: { type: string, minLength: 2, maxLength: 120 }
+                description: { type: string }
+                price_cents: { type: integer, minimum: 1 }
+                ip_name: { type: string }
+                category: { type: string }
+                condition: { type: string }
+                stock: { type: integer, minimum: 0 }
+                transaction_type: { type: string, enum: [SALE, PREORDER, EXCHANGE] }
+                generation_job_id: { type: string, format: uuid, description: 成功任务的 ID；会复制 GLB 到商品资产，仍需补图后才能发布 }
+      responses:
+        '201':
+          description: 草稿已创建；若带 generation_job_id 则已绑定复制后的模型
+        '400': { $ref: '#/components/responses/InvalidArgument' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: 生成任务不存在或不属于当前用户
+        '409':
+          description: 生成任务尚未完成
   /products/mine:
     get:
       operationId: listMyProducts
@@ -19,6 +49,42 @@ paths:
         '200':
           description: 当前用户的商品列表
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /products/{product_id}/publish:
+    post:
+      operationId: publishProduct
+      summary: 发布草稿或重新上架已下架商品
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 商品状态已变为 PUBLISHED
+        '400':
+          description: 草稿缺少发布所需图片
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: 商品不存在
+        '409':
+          description: 商品当前状态不允许发布
+  /products/{product_id}/off-shelf:
+    post:
+      operationId: offShelfProduct
+      summary: 下架已发布商品
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 商品状态已变为 OFF_SHELF
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: 商品不存在
+        '409':
+          description: 商品当前状态不允许下架
   /products/{product_id}/images:
     post:
       operationId: uploadProductImage
@@ -93,12 +159,34 @@ paths:
             image/png: { schema: { type: string, format: binary } }
             image/webp: { schema: { type: string, format: binary } }
             model/gltf-binary: { schema: { type: string, format: binary } }
-        '403': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/JobNotFound' }
+        '404':
+          description: 商品未发布、商品不存在或资产不存在
+  /generation-jobs/prompt-preview:
+    post:
+      operationId: previewGenerationPrompt
+      summary: 预览优化后的生成 Prompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptPreviewRequest'
+      responses:
+        '201':
+          description: Prompt 优化预览已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptPreviewResponse'
+        '400': { $ref: '#/components/responses/InvalidArgument' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503':
+          description: Prompt 优化服务暂不可用
+          content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
   /generation-jobs:
     post:
       operationId: createGenerationJob
-      summary: 创建生成任务
+      summary: 使用已确认 Prompt 创建生成任务
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -225,14 +313,35 @@ components:
     JobStage:
       type: string
       enum: [QUEUED, OPTIMIZING_PROMPT, SUBMITTING_PROVIDER, GENERATING, FETCHING_OUTPUT, STORING_OUTPUT, COMPLETED]
-    CreateGenerationJobRequest:
+    PromptPreviewRequest:
       type: object
       additionalProperties: false
-      required: [prompt, product_type, provider, copyright_confirmed]
+      required: [prompt, product_type]
       properties:
         prompt: { type: string, minLength: 1, maxLength: 2000 }
         product_type: { type: string, minLength: 1, maxLength: 64 }
-        provider: { type: string, enum: [mock] }
+    PromptPreviewResponse:
+      type: object
+      required: [id, raw_prompt, product_type, optimized_prompt, source, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        raw_prompt: { type: string }
+        product_type: { type: string }
+        optimized_prompt: { type: string }
+        structured_prompt: { type: object, additionalProperties: true }
+        rag_context: { type: object, additionalProperties: true }
+        rag_version: { type: string }
+        template_version: { type: string }
+        source: { type: string }
+        expires_at: { type: string, format: date-time }
+    CreateGenerationJobRequest:
+      type: object
+      additionalProperties: false
+      required: [prompt_preview_id, final_prompt, provider, copyright_confirmed]
+      properties:
+        prompt_preview_id: { type: string, format: uuid }
+        final_prompt: { type: string, minLength: 1, maxLength: 1024 }
+        provider: { type: string, enum: [mock, hy3d] }
         parameters: { type: object, additionalProperties: true }
         copyright_confirmed: { type: boolean, enum: [true] }
     CreateGenerationJobResponse:
