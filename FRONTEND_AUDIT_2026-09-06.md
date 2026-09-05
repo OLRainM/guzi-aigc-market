@@ -238,16 +238,18 @@ export function LoadingSpinner({ fullscreen = false }) {
 {loading ? <LoadingSpinner /> : <ProductList products={data} />}
 ```
 
-### 10. **表单验证逻辑分散**
+### 10. **表单验证逻辑分散** —— 部分已解决
 **问题**：
 - `Publish.tsx:118-121` 手动检查文件数量
 - `Generation.tsx:112-114` 手动检查 prompt 长度
 - 缺少统一的验证错误提示
 
-**建议**：引入 `react-hook-form` + `zod`
-```bash
-npm install react-hook-form zod @hookform/resolvers
-```
+**已完成**：
+- 新增 `src/hooks/useForm.ts`，统一表单提交中的提交状态、错误清空、异常转换和重复提交保护。
+- 生成工作台增加 Prompt/商品类型非空、确认 Prompt 非空、预览过期校验。
+- 商品发布增加文本字段、金额和非负整数库存校验。
+
+**仍待处理**：复杂字段规则和跨页面 schema 校验仍未统一；暂不引入 `react-hook-form` + `zod`，避免为当前窄范围改动扩大依赖和迁移面。
 
 ---
 
@@ -315,7 +317,7 @@ const CONFIG = {
 ### 📅 下周优化
 
 5. ✅ 为 Navigation/Footer 添加 `memo`
-6. 提取表单处理 hook（useForm）
+6. ✅ 提取表单处理 hook（useForm）
 7. ✅ 创建基础 UI 组件（LoadingSpinner）
 8. ✅ 修复轮询逻辑终止条件
 
@@ -370,4 +372,5 @@ const CONFIG = {
 ---
 
 **报告生成时间**：2026-09-06  
+**本轮跟进**：已完成表单提交 Hook、生成与商品发布基础校验；构建与针对性诊断通过。复杂 schema 校验、全量 ARIA 清查和单元测试仍列为后续工作。  
 **后续跟进**：建议每月进行一次健康度复查
