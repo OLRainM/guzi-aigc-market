@@ -268,6 +268,44 @@ docker compose up -d --remove-orphans --wait --wait-timeout 180
 docker compose ps
 """
 
+RECOVERY_CMD = r"""
+set -eu
+cd /opt/aigc-3d-platform
+STREAM=$(awk -F= '$1 == "REDIS_STREAM" {print $2}' .env)
+[ -n "$STREAM" ]
+BEFORE_VOLUMES=$(docker volume ls --filter label=com.docker.compose.project=aigc-3d-platform --format '{{.Name}}' | sort)
+
+echo '===== BEFORE: CONTAINERS ====='
+docker compose ps --format 'table {{.Name}}\\t{{.Service}}\\t{{.State}}\\t{{.Health}}'
+echo '===== BEFORE: VOLUMES ====='
+printf '%s\\n' "$BEFORE_VOLUMES"
+echo '===== BEFORE: PERSISTENCE ====='
+docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -NBe "SELECT COUNT(*) FROM generation_jobs; SELECT COUNT(*) FROM generation_outputs; SELECT COUNT(*) FROM generation_outbox;"'
+docker compose exec -T redis redis-cli ping
+docker compose exec -T redis redis-cli XINFO STREAM "$STREAM" || true
+docker compose exec -T redis redis-cli XINFO GROUPS "$STREAM" || true
+
+echo '===== RESTART APPLICATION ONLY ====='
+docker compose restart api worker web
+docker compose up -d --wait --wait-timeout 180 api worker web
+
+echo '===== AFTER: CONTAINERS ====='
+docker compose ps --format 'table {{.Name}}\\t{{.Service}}\\t{{.State}}\\t{{.Health}}'
+echo '===== AFTER: PERSISTENCE ====='
+docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -NBe "SELECT COUNT(*) FROM generation_jobs; SELECT COUNT(*) FROM generation_outputs; SELECT COUNT(*) FROM generation_outbox;"'
+docker compose exec -T redis redis-cli ping
+docker compose exec -T redis redis-cli XINFO STREAM "$STREAM" || true
+docker compose exec -T redis redis-cli XINFO GROUPS "$STREAM" || true
+curl -fsS http://127.0.0.1/healthz >/dev/null
+curl -fsS http://127.0.0.1/readyz >/dev/null
+curl -fsS http://127.0.0.1/api/v1/version
+
+echo '===== VOLUMES UNCHANGED CHECK ====='
+AFTER_VOLUMES=$(docker volume ls --filter label=com.docker.compose.project=aigc-3d-platform --format '{{.Name}}' | sort)
+printf '%s\\n' "$AFTER_VOLUMES"
+[ "$BEFORE_VOLUMES" = "$AFTER_VOLUMES" ]
+"""
+
 VERIFY_CMD = r"""
 set +e
 echo '===== CONTAINERS ====='
@@ -330,7 +368,7 @@ echo '===== DONE ====='
 
 def main() -> None:
     stage = sys.argv[1] if len(sys.argv) > 1 else "all"
-    allowed = {"prepare", "upload", "build", "verify", "status", "all"}
+    allowed = {"prepare", "upload", "build", "verify", "recovery", "status", "all"}
     if stage not in allowed:
         raise SystemExit(f"usage: sync_and_deploy.py [{' | '.join(sorted(allowed))}]")
     cfg = load_cfg()
@@ -349,6 +387,9 @@ def main() -> None:
         if stage in {"verify", "all"}:
             print("=== verify ===")
             must_run(client, VERIFY_CMD, timeout=180)
+        if stage == "recovery":
+            print("=== application restart recovery ===")
+            must_run(client, RECOVERY_CMD, timeout=240)
         if stage == "status":
             print("=== status ===")
             must_run(

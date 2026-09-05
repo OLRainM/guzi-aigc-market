@@ -125,7 +125,7 @@ func main() {
 	r.GET("/readyz", readyHandler(deps))
 	api := r.Group("/api/v1")
 	api.GET("/version", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"service": "api", "version": "0.3.0", "environment": env("APP_ENV", "development")})
+		c.JSON(http.StatusOK, gin.H{"service": "api", "version": "1.0.0", "environment": env("APP_ENV", "development")})
 	})
 	authHandler.RegisterRoutes(api)
 	catalogHandler.RegisterRoutes(api, authHandler.Authenticate(), authHandler.ResolveUser)

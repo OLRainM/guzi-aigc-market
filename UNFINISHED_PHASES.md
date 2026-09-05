@@ -2,8 +2,8 @@
 
 - **项目**：谷子交易与 3D/AIGC 平台
 - **记录日期**：2026-09-05
-- **当前阶段**：阶段 1–5 与阶段 6 的认证、商品/资产、3D 查看器、收藏/个人中心、交易沙盒、模拟订单、AI 生成 HTTP 闭环、一键发布、生成可靠性和最小管理后台/审计均已完成；阶段 7 的发布前验证与运维尚未完成。
-- **当前基线**：核心 MVP 已可部署并在 `http://8.154.28.98` 验收；Mock Provider 可用，真实 AI Provider 仍需人工配置密钥并联调。
+- **当前阶段**：核心 MVP 已完成并发布为 `v1.0.0`；阶段 7 已完成 API/Worker/Web 重启恢复验收和本地发布构建，但备份恢复演练、完整安全/依赖检查、真实 Provider 联调和内测闭环仍未完成。
+- **当前基线**：核心 MVP 已可部署并在 `http://8.154.28.98` 验收；Mock Provider 可用，真实 AI Provider 仍需人工配置密钥并联调；`/api/v1/version` 为 `1.0.0`。
 - **权威未完成清单**：见本文「十一、未完成事项与推荐开发顺序」中的 P1/P2 表格；该节按依赖和优先级排序，后文阶段 6/7 仅作范围对照。
 
 ## 当前进行中的任务
@@ -37,7 +37,7 @@
 
 - 已备份到 `/opt/backup/aigc-3d-platform-20260831-161024.tar.gz`；宿主机 Nginx 已停止并禁用；公网 80 改由 Web 容器占用。
 - 远端 `.env` 已改为 `WEB_PORT=80`、`COOKIE_SECURE=false`、`CORS_ALLOW_ORIGIN=http://8.154.28.98`、`VITE_API_BASE_URL=`；`vm.overcommit_memory=1`；Docker 日志轮转 `json-file 10m×3`。
-- 当前代码已同步并重建：六个容器均 `healthy`。API `version=0.3.0`，`APP_ENV=production`。
+- 当前代码已同步并重建：六个容器均 `healthy`。API `version=1.0.0`，`APP_ENV=production`。
 - 本机与公网验收：`/` 返回前端 200；`/healthz`、`/readyz`、`/api/v1/version` 均为 API JSON 200。注册/登录/刷新返回 `HttpOnly; SameSite=Lax` 的 `refresh_token`（无 `Secure`），退出 204。
 
 ## 阶段 2 运行环境验收（2026-08-31）
@@ -465,7 +465,7 @@ Provider 约定：
 3. `docker-compose.yml`：MySQL/Redis/MinIO 发布 `127.0.0.1:*`；API/Worker 仅 `expose`
 4. API `securityHeaders()`：`nosniff` / `DENY` / `strict-origin-when-cross-origin` / `camera=(), microphone=(), geolocation=()`（**不含** fullscreen、CSP、HSTS）
 5. CORS：`AllowCredentials=true`，默认源 `http://localhost:5173`，允许头含 `Authorization`、`Idempotency-Key`
-6. `/healthz` 恒 200；`/readyz` 2 秒内 ping MySQL/Redis/MinIO，任一失败 503；`/api/v1/version` 当前 `0.3.0`
+6. `/healthz` 恒 200；`/readyz` 2 秒内 ping MySQL/Redis/MinIO，任一失败 503；`/api/v1/version` 当前 `1.0.0`
 7. 阶段 2：`.deploy/setup_phase2.py` 配 `vm.overcommit_memory=1`、Docker 日志 `json-file 10m×3`、`firewalld` 仅 ssh/http、chronyd、`/opt/backup`、磁盘告警
 8. 部署：`.deploy/sync_and_deploy.py` 备份 → 上传 `apps/*` 与 `rag/terminology` → `docker compose build/up` → 健康检查与登录 Cookie 验收
 
@@ -774,13 +774,13 @@ Docker Compose 可用
 | --- | --- | --- | --- | --- |
 | 4 | 补齐 API 单元测试与关键集成测试 | 覆盖认证、越权、上传、商品状态、订单幂等/库存、AI 全生命周期、重复回调和管理员权限。 | **部分完成**；核心包已有测试，管理能力、跨模块集成和部分异常路径尚不完整。 | `P1`；依赖事项 1–3 的接口稳定；可提前准备测试矩阵。 |
 | 5 | 发布前端到端与失败场景验收 | 执行注册登录、越权、伪造/超限上传、商品发布、订单闭环、AI 失败恢复、页面刷新和错误降级。 | **进行中**；已建立可切换 `E2E_BASE_URL` 的 Playwright 基线，覆盖匿名保护、注册登录刷新和无效订单参数；完整商品/订单/AI 闭环仍需可控测试数据与部署环境。 | `P1`；依赖事项 1–4 和可用部署环境；是内测前门槛。 |
-| 6 | 数据持久化与重启恢复验证 | 验证 API/Worker/Web 重启后业务数据、对象资产和 Redis Streams 未确认消息保持一致，并检查孤儿资产与重复回调。 | **部分完成**；持久卷和生成可靠性已实现，尚无可重复的恢复验收记录。 | `P1`；依赖事项 4、5；需在真实 Compose 环境执行。 |
+| 6 | 数据持久化与重启恢复验证 | 验证 API/Worker/Web 重启后业务数据、对象资产和 Redis Streams 未确认消息保持一致，并检查孤儿资产与重复回调。 | **已完成**；执行 `.deploy/sync_and_deploy.py recovery` 成功，仅重启 API/Worker/Web；前后卷名称、MySQL 生成记录、Redis Streams/消费组和健康接口核对通过，六个容器均恢复为 healthy。 | `P1`；已完成，后续随部署维护。 |
 | 7 | 备份策略与恢复演练 | 制定 MySQL、对象存储和必要配置的备份保留、校验和恢复步骤，至少完成一次恢复演练。 | **未完成**；已有部署前备份目录和记录，无自动备份策略及恢复验收。 | `P1`；依赖事项 6；恢复演练不得破坏生产数据。 |
 | 8 | 结构化日志、Request ID 与基础监控 | 统一 API/Worker 日志字段，串联请求和任务，补充关键指标、容器健康、队列积压与错误告警。 | **部分完成**；API 已有 `X-Request-ID` 和健康检查，结构化日志、Worker 链路和指标告警不完整。 | `P1`；依赖事项 5、6；先覆盖核心链路。 |
 | 9 | 生产安全与依赖检查 | 检查公网端口、默认凭据、Cookie/CORS、敏感配置、依赖漏洞、生产构建产物及上传/鉴权边界。 | **部分完成**；公网隔离、JWT 和基础安全头已验收，漏洞扫描及完整发布清单未完成。 | `P1`；依赖部署环境和事项 4–8；公开内测前完成。 |
 | 10 | 真实 Provider 配置与联调 | 注入 AI/LLM 密钥，切换 `GENERATION_PROVIDER=hy3d`，验证提交、轮询、下载、超时、限流、余额不足和输出校验。 | **未完成**；适配器代码已完成，当前默认 Mock，密钥和真实服务验收依赖人工。 | `P1`；依赖事项 2、4、5 及供应商账号；若只验收 Mock 可暂缓。 |
 | 11 | 演示数据、测试账号与内测指标 | 准备授权素材、GLB、买卖双方及管理员账号，执行目标用户内测，记录路径完成率、阻断缺陷和 3D/AI 使用指标。 | **未完成**；公网环境可访问，尚无完整演示数据和用户测试记录。 | `P1`；依赖事项 3–10 的核心部分；属于 MVP 完成定义。 |
-| 12 | 发布问题清单与 MVP 修复闭环 | 汇总测试/内测问题，按严重度分级，修复发布阻断项并重新验收，形成版本基线。 | **未完成**；当前只有开发缺口记录，没有正式发布问题清单和关闭标准。 | `P1`；依赖事项 5–11；作为阶段 7 收尾。 |
+| 12 | 发布问题清单与 MVP 修复闭环 | 汇总测试/内测问题，按严重度分级，修复发布阻断项并重新验收，形成版本基线。 | **部分完成**；本次以 `v1.0.0` 建立 MVP 版本基线并记录已知限制；真实 Provider、内测和完整安全审计相关问题仍待外部条件满足后关闭。 | `P1`；依赖事项 5–11；作为阶段 7 收尾。 |
 
 ### 11.3 P2：试运营与产品扩展
 
